@@ -35,7 +35,7 @@ from openhands.utils.jsonpatch_compat import deep_merge
 from openhands.utils.sdk_settings_compat import (
     ACPAgentSettings,
     AgentSettingsConfig,
-    LLMAgentSettings,
+    OpenHandsAgentSettings,
     default_agent_settings,
     validate_agent_settings,
 )
@@ -287,7 +287,7 @@ class Settings(BaseModel):
     @field_serializer('agent_settings')
     def agent_settings_serializer(
         self,
-        agent_settings: LLMAgentSettings | ACPAgentSettings,
+        agent_settings: OpenHandsAgentSettings | ACPAgentSettings,
         info: SerializationInfo,
     ) -> dict[str, Any]:
         context = info.context or {}
@@ -326,7 +326,7 @@ class Settings(BaseModel):
         agent_settings = data.get('agent_settings')
         if isinstance(agent_settings, dict):
             data['agent_settings'] = _coerce_dict_secrets(agent_settings)
-        elif isinstance(agent_settings, (LLMAgentSettings, ACPAgentSettings)):
+        elif isinstance(agent_settings, (OpenHandsAgentSettings, ACPAgentSettings)):
             data['agent_settings'] = agent_settings.model_dump(
                 mode='json', context={'expose_secrets': True}
             )
@@ -396,7 +396,7 @@ class Settings(BaseModel):
             search_api_key=app_config.search_api_key,
             max_budget_per_task=app_config.max_budget_per_task,
             # Always LLM for config-file-sourced settings
-            agent_settings=LLMAgentSettings(**agent_settings_dict),
+            agent_settings=OpenHandsAgentSettings(**agent_settings_dict),
             conversation_settings=ConversationSettings.model_validate(
                 {
                     'confirmation_mode': bool(app_config.security.confirmation_mode),
@@ -408,7 +408,7 @@ class Settings(BaseModel):
 
     def merge_with_config_settings(self) -> 'Settings':
         """Merge config.toml MCP settings with stored SDK agent_settings."""
-        if not isinstance(self.agent_settings, LLMAgentSettings):
+        if not isinstance(self.agent_settings, OpenHandsAgentSettings):
             return self
         config_settings = Settings.from_config()
         if not config_settings:
@@ -424,7 +424,7 @@ class Settings(BaseModel):
         self.agent_settings.mcp_config = merged_mcp
         return self
 
-    def to_agent_settings(self) -> LLMAgentSettings | ACPAgentSettings:
+    def to_agent_settings(self) -> OpenHandsAgentSettings | ACPAgentSettings:
         return self.agent_settings
 
     def get_agent_settings_display(self) -> dict[str, Any]:

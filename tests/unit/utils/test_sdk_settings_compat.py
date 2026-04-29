@@ -7,6 +7,7 @@ from openhands.utils.sdk_settings_compat import (
     ACPAgentSettings,
     AgentSettingsConfig,
     LLMAgentSettings,
+    OpenHandsAgentSettings,
     default_agent_settings,
     export_agent_settings_schema,
     validate_agent_settings,
@@ -53,6 +54,18 @@ def test_llm_agent_settings_is_usable():
     """LLMAgentSettings should be constructable."""
     settings = LLMAgentSettings()
     assert settings is not None
+    assert isinstance(settings, OpenHandsAgentSettings)
+
+
+def test_openhands_agent_settings_is_usable():
+    """OpenHandsAgentSettings is the canonical local name for the LLM agent."""
+    settings = OpenHandsAgentSettings()
+    assert settings is not None
+    assert settings.agent_kind == 'llm'
+
+
+def test_llm_agent_settings_is_silent_alias_for_openhands():
+    assert LLMAgentSettings is OpenHandsAgentSettings
 
 
 @pytest.mark.skipif(

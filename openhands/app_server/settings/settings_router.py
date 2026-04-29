@@ -47,7 +47,7 @@ from openhands.utils.llm import (
     resolve_llm_base_url,
 )
 from openhands.utils.sdk_settings_compat import (
-    LLMAgentSettings,
+    OpenHandsAgentSettings,
     export_agent_settings_schema,
 )
 
@@ -70,7 +70,7 @@ def _post_merge_llm_fixups(settings: Settings) -> None:
     rules to :func:`openhands.utils.llm.resolve_llm_base_url` so the
     personal-save and enterprise org-defaults paths stay in lockstep.
     """
-    if not isinstance(settings.agent_settings, LLMAgentSettings):
+    if not isinstance(settings.agent_settings, OpenHandsAgentSettings):
         return
     llm = settings.agent_settings.llm
     llm.base_url = resolve_llm_base_url(

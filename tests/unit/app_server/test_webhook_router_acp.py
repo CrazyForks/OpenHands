@@ -151,7 +151,9 @@ async def test_llm_conversation_stores_llm_model(async_session, service, sandbox
 
 
 @pytest.mark.asyncio
-async def test_acp_conversation_stores_display_name(async_session, service, sandbox_info):
+async def test_acp_conversation_stores_display_name(
+    async_session, service, sandbox_info
+):
     """ACP path stores display label in display_name and leaves llm_model null."""
     acp_info = _make_acp_conversation_info(
         acp_command=['npx', '-y', '@agentclientprotocol/claude-agent-acp']

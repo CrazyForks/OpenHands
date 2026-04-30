@@ -48,11 +48,11 @@ from openhands.app_server.app_conversation.app_conversation_service_base import 
     AppConversationServiceBase,
     get_project_dir,
 )
-from openhands.app_server.app_conversation.app_conversation_start_task_service import (
-    AppConversationStartTaskService,
-)
 from openhands.app_server.app_conversation.agent_server_routing import (
     acp_display_name as _acp_display_name,
+)
+from openhands.app_server.app_conversation.app_conversation_start_task_service import (
+    AppConversationStartTaskService,
 )
 from openhands.app_server.app_conversation.hook_loader import (
     load_hooks_from_agent_server,

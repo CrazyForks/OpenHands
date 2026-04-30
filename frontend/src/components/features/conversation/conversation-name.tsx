@@ -162,24 +162,20 @@ export function ConversationName() {
 
         {titleMode !== "edit" &&
           (conversation.display_name ?? conversation.llm_model) && (
-            <Typography.Text
+            <span
               className="text-xs text-[#A3A3A3] max-w-[150px] flex items-center gap-1 overflow-hidden"
-              testId="conversation-name-llm-model"
+              title={
+                conversation.display_name ??
+                conversation.llm_model ??
+                undefined
+              }
+              data-testid="conversation-name-llm-model"
             >
-              <span
-                className="flex items-center gap-1 overflow-hidden"
-                title={
-                  conversation.display_name ??
-                  conversation.llm_model ??
-                  undefined
-                }
-              >
-                <CircuitIcon width={12} height={12} className="shrink-0" />
-                <Typography.Text className="text-xs text-[#A3A3A3] truncate">
-                  {conversation.display_name ?? conversation.llm_model}
-                </Typography.Text>
-              </span>
-            </Typography.Text>
+              <CircuitIcon width={12} height={12} className="shrink-0" />
+              <Typography.Text className="text-xs text-[#A3A3A3] truncate">
+                {conversation.display_name ?? conversation.llm_model}
+              </Typography.Text>
+            </span>
           )}
 
         {titleMode !== "edit" && (

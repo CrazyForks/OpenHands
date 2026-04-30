@@ -264,6 +264,7 @@ class TestSaasSQLAppConversationInfoService:
         stored_metadata.trigger = None
         stored_metadata.pr_number = []
         stored_metadata.llm_model = None
+        stored_metadata.display_name = None
         from datetime import datetime, timezone
 
         stored_metadata.created_at = datetime.now(timezone.utc)

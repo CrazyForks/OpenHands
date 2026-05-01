@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { useCreateConversation } from "#/hooks/mutation/use-create-conversation";
 // Removed useRepositoryBranches import - GitBranchDropdown manages its own data
 import { useIsCreatingConversation } from "#/hooks/use-is-creating-conversation";
+import { useRepositoryOnboardingFiles } from "#/hooks/query/use-repository-onboarding-files";
 import { Branch, GitRepository } from "#/types/git";
 import { BrandButton } from "../settings/brand-button";
 import { useUserProviders } from "#/hooks/use-user-providers";
@@ -14,6 +15,7 @@ import { GitProviderDropdown } from "./git-provider-dropdown";
 import { GitBranchDropdown } from "./git-branch-dropdown";
 import { GitRepoDropdown } from "./git-repo-dropdown";
 import { useHomeStore } from "#/stores/home-store";
+import { OnboardingPluginModal } from "./onboarding-plugin-modal";
 
 interface RepositorySelectionFormProps {
   onRepoSelection: (repo: GitRepository | null) => void;
@@ -33,6 +35,9 @@ export function RepositorySelectionForm({
   );
   const [selectedProvider, setSelectedProvider] =
     React.useState<Provider | null>(null);
+  const [showOnboardingModal, setShowOnboardingModal] = React.useState(false);
+  const [onboardingModalDismissed, setOnboardingModalDismissed] =
+    React.useState(false);
 
   const { providers } = useUserProviders();
   const {
@@ -49,6 +54,39 @@ export function RepositorySelectionForm({
   const isCreatingConversationElsewhere = useIsCreatingConversation();
 
   const { t } = useTranslation();
+
+  // Check if the selected repository has onboarding files
+  const { data: onboardingFiles } = useRepositoryOnboardingFiles(
+    selectedRepository?.full_name,
+    selectedProvider || providers[0],
+    selectedBranch?.name,
+    !!selectedRepository && !!selectedBranch,
+  );
+
+  // Show modal when both files are missing and user hasn't dismissed it
+  React.useEffect(() => {
+    if (
+      onboardingFiles &&
+      !onboardingFiles.has_agents_md &&
+      !onboardingFiles.has_repo_md &&
+      !onboardingModalDismissed &&
+      selectedRepository &&
+      selectedBranch
+    ) {
+      setShowOnboardingModal(true);
+    }
+  }, [
+    onboardingFiles,
+    onboardingModalDismissed,
+    selectedRepository,
+    selectedBranch,
+  ]);
+
+  // Reset modal dismissed state when repository changes
+  React.useEffect(() => {
+    setOnboardingModalDismissed(false);
+    setShowOnboardingModal(false);
+  }, [selectedRepository?.id]);
 
   // Auto-select provider logic
   React.useEffect(() => {
@@ -212,6 +250,20 @@ export function RepositorySelectionForm({
         {!isCreatingConversation && "Launch"}
         {isCreatingConversation && t("HOME$LOADING")}
       </BrandButton>
+
+      {showOnboardingModal && (
+        <OnboardingPluginModal
+          onLoadPlugin={() => {
+            // TODO: Implement load plugin functionality
+            setShowOnboardingModal(false);
+            setOnboardingModalDismissed(true);
+          }}
+          onDismiss={() => {
+            setShowOnboardingModal(false);
+            setOnboardingModalDismissed(true);
+          }}
+        />
+      )}
     </div>
   );
 }

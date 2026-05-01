@@ -1,5 +1,10 @@
 import { openHands } from "../open-hands-axios";
-import { RepositoryPage, BranchPage, InstallationPage } from "#/types/git";
+import {
+  RepositoryPage,
+  BranchPage,
+  InstallationPage,
+  RepositoryOnboardingFiles,
+} from "#/types/git";
 import { GitChange, GitChangeDiff } from "../open-hands.types";
 import ConversationService from "../conversation-service/conversation-service.api";
 
@@ -212,6 +217,31 @@ class GitService {
       params: { path },
       headers: ConversationService.getConversationHeaders(),
     });
+    return data;
+  }
+
+  /**
+   * Check if a repository has onboarding files (AGENTS.md, REPO.md)
+   * @param repository Repository name in format owner/repo
+   * @param provider Git provider
+   * @param branch Optional branch name (defaults to repository default branch)
+   * @returns Presence of AGENTS.md and REPO.md files
+   */
+  static async getRepositoryOnboardingFiles(
+    repository: string,
+    provider: string,
+    branch?: string,
+  ): Promise<RepositoryOnboardingFiles> {
+    const { data } = await openHands.get<RepositoryOnboardingFiles>(
+      "/api/v1/git/repositories/onboarding-files",
+      {
+        params: {
+          provider,
+          repository,
+          branch,
+        },
+      },
+    );
     return data;
   }
 }

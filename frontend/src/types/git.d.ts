@@ -54,6 +54,14 @@ interface InstallationPage {
   next_page_id: string | null;
 }
 
+/**
+ * V1 API response for repository onboarding files check
+ */
+interface RepositoryOnboardingFiles {
+  has_agents_md: boolean;
+  has_repo_md: boolean;
+}
+
 interface GitRepository {
   id: string;
   full_name: string;

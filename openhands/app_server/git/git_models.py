@@ -77,3 +77,15 @@ class SuggestedTaskPage(BaseModel):
 
     items: list[SuggestedTask]
     next_page_id: str | None = None
+
+
+class RepositoryOnboardingFilesResponse(BaseModel):
+    """Response for repository onboarding files check.
+
+    Attributes:
+        has_agents_md: Whether the repository has an AGENTS.md file.
+        has_repo_md: Whether the repository has a REPO.md file.
+    """
+
+    has_agents_md: bool
+    has_repo_md: bool

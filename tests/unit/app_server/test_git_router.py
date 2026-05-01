@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from openhands.app_server.git.git_models import SortOrder
 from openhands.app_server.git.git_router import (
+    check_repository_onboarding_files,
     router,
     search_branches,
     search_repositories,
@@ -935,3 +936,112 @@ class TestSearchSuggestedTasks:
         ):
             response = test_client.get('/git/suggested-tasks/search')
             assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+class TestCheckRepositoryOnboardingFiles:
+    """Test suite for check_repository_onboarding_files function."""
+
+    @pytest.mark.asyncio
+    @patch('openhands.app_server.git.git_router.ProviderHandler')
+    async def test_returns_both_files_exist(self, mock_handler_cls):
+        """Test response when both AGENTS.md and REPO.md exist."""
+        mock_handler = MagicMock()
+        mock_handler.check_repository_file_exists = AsyncMock(return_value=True)
+        mock_handler_cls.return_value = mock_handler
+
+        mock_context = _make_mock_user_context(
+            provider_tokens={
+                ProviderType.GITHUB: ProviderToken(user_id='user-123', token='token')
+            },
+            user_id='user-123',
+        )
+
+        result = await check_repository_onboarding_files(
+            provider=ProviderType.GITHUB,
+            repository='user/repo',
+            branch='main',
+            user_context=mock_context,
+        )
+
+        assert result.has_agents_md is True
+        assert result.has_repo_md is True
+
+    @pytest.mark.asyncio
+    @patch('openhands.app_server.git.git_router.ProviderHandler')
+    async def test_returns_no_files_exist(self, mock_handler_cls):
+        """Test response when neither AGENTS.md nor REPO.md exist."""
+        mock_handler = MagicMock()
+        mock_handler.check_repository_file_exists = AsyncMock(return_value=False)
+        mock_handler_cls.return_value = mock_handler
+
+        mock_context = _make_mock_user_context(
+            provider_tokens={
+                ProviderType.GITHUB: ProviderToken(user_id='user-123', token='token')
+            },
+            user_id='user-123',
+        )
+
+        result = await check_repository_onboarding_files(
+            provider=ProviderType.GITHUB,
+            repository='user/repo',
+            branch=None,
+            user_context=mock_context,
+        )
+
+        assert result.has_agents_md is False
+        assert result.has_repo_md is False
+
+    @pytest.mark.asyncio
+    @patch('openhands.app_server.git.git_router.ProviderHandler')
+    async def test_returns_only_agents_md_exists(self, mock_handler_cls):
+        """Test response when only AGENTS.md exists."""
+        mock_handler = MagicMock()
+
+        async def check_file(repo, file_path, provider, branch):
+            return file_path == 'AGENTS.md'
+
+        mock_handler.check_repository_file_exists = AsyncMock(side_effect=check_file)
+        mock_handler_cls.return_value = mock_handler
+
+        mock_context = _make_mock_user_context(
+            provider_tokens={
+                ProviderType.GITHUB: ProviderToken(user_id='user-123', token='token')
+            },
+            user_id='user-123',
+        )
+
+        result = await check_repository_onboarding_files(
+            provider=ProviderType.GITHUB,
+            repository='user/repo',
+            branch='main',
+            user_context=mock_context,
+        )
+
+        assert result.has_agents_md is True
+        assert result.has_repo_md is False
+
+    def test_returns_401_when_no_provider_tokens(self, test_client):
+        """Test that 401 is returned when no provider tokens."""
+        with patch(
+            'openhands.app_server.user.auth_user_context.AuthUserContext.get_provider_tokens',
+            AsyncMock(return_value=None),
+        ):
+            response = test_client.get(
+                '/git/repositories/onboarding-files',
+                params={'provider': 'github', 'repository': 'user/repo'},
+            )
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_returns_422_for_missing_repository(self, test_client):
+        """Test that 422 is returned when repository is missing."""
+        with patch(
+            'openhands.app_server.user.auth_user_context.AuthUserContext.get_provider_tokens',
+            AsyncMock(return_value={'github': 'token'}),
+        ):
+            response = test_client.get(
+                '/git/repositories/onboarding-files',
+                params={'provider': 'github'},
+            )
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY

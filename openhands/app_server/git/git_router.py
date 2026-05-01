@@ -14,6 +14,7 @@ from openhands.app_server.config import depends_user_context, get_global_config
 from openhands.app_server.git.git_models import (
     BranchPage,
     InstallationPage,
+    RepositoryOnboardingFilesResponse,
     RepositoryPage,
     SortOrder,
     SuggestedTaskPage,
@@ -196,6 +197,24 @@ async def search_repositories(
 
     return RepositoryPage(items=repos, next_page_id=next_page_id)
 
+async def get_provider_tokens_from_user_context(user_context):
+    provider_tokens = await user_context.get_provider_tokens()
+    if not provider_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Git provider token required (such as GitHub).',
+        )
+
+    user_id = await user_context.get_user_id()
+    # Cast to the expected type since we validated provider_tokens exists
+    typed_provider_tokens: PROVIDER_TOKEN_TYPE = provider_tokens  # type: ignore[assignment]
+    client = ProviderHandler(
+        provider_tokens=MappingProxyType(typed_provider_tokens),
+        external_auth_id=user_id,
+    )
+
+    return client
+
 
 @router.get('/branches/search')
 async def search_branches(
@@ -329,3 +348,38 @@ async def search_suggested_tasks(
         next_page_id = encode_page_id(page + 1)
 
     return SuggestedTaskPage(items=paginated_tasks, next_page_id=next_page_id)
+
+
+@router.get('/repositories/onboarding-files')
+async def check_repository_onboarding_files(
+    provider: ProviderType,
+    repository: Annotated[
+        str,
+        Query(title='Repository name in format owner/repo'),
+    ],
+    branch: Annotated[
+        str | None,
+        Query(title='Branch name to check (defaults to repository default branch)'),
+    ] = None,
+    user_context: UserContext = user_context_dependency,
+) -> RepositoryOnboardingFilesResponse:
+    """Check if a repository has onboarding files (AGENTS.md, REPO.md).
+
+    Returns the presence of AGENTS.md and REPO.md files in the repository root.
+    """
+    # Get provider tokens from user context
+    provider_tokens = await user_context.get_provider_tokens()
+    client = await get_provider_tokens_from_user_context(user_context)
+
+    # Check for AGENTS.md and REPO.md files
+    has_agents_md = await client.check_repository_file_exists(
+        repository, 'AGENTS.md', provider, branch
+    )
+    has_repo_md = await client.check_repository_file_exists(
+        repository, 'REPO.md', provider, branch
+    )
+
+    return RepositoryOnboardingFilesResponse(
+        has_agents_md=has_agents_md,
+        has_repo_md=has_repo_md,
+    )

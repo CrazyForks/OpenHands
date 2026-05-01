@@ -649,3 +649,49 @@ class ProviderHandler:
             remote_url = f'{protocol}://{domain}/{repo_name}.git'
 
         return remote_url
+
+    async def check_repository_file_exists(
+        self,
+        repository: str,
+        file_path: str,
+        specified_provider: ProviderType | None = None,
+        branch: str | None = None,
+    ) -> bool:
+        """Check if a file exists in a repository.
+
+        Args:
+            repository: The full repository name (owner/repo)
+            file_path: The path to the file to check
+            specified_provider: Optional provider to use for the check
+            branch: Optional branch to check (defaults to repository's default branch)
+
+        Returns:
+            True if the file exists, False otherwise
+        """
+        if specified_provider:
+            try:
+                service = self.get_service(specified_provider)
+                if hasattr(service, 'check_repository_file_exists'):
+                    return await service.check_repository_file_exists(
+                        repository, file_path, branch
+                    )
+            except Exception as e:
+                logger.warning(
+                    f'Failed to check file exists with provider {specified_provider}: {e}'
+                )
+                return False
+
+        for provider in self.provider_tokens:
+            try:
+                service = self.get_service(provider)
+                if hasattr(service, 'check_repository_file_exists'):
+                    return await service.check_repository_file_exists(
+                        repository, file_path, branch
+                    )
+            except Exception as e:
+                logger.warning(
+                    f'Failed to check file exists with provider {provider}: {e}'
+                )
+                continue
+
+        return False

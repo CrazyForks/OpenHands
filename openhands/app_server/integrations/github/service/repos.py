@@ -306,3 +306,27 @@ class GitHubReposMixin(GitHubMixinBase):
         repo, _ = await self._make_request(url)
 
         return self._parse_repository(repo)
+
+    async def check_repository_file_exists(
+        self, repository: str, file_path: str, branch: str | None = None
+    ) -> bool:
+        """Check if a file exists in a repository.
+
+        Args:
+            repository: The full repository name (owner/repo)
+            file_path: The path to the file to check
+            branch: Optional branch to check (defaults to repository's default branch)
+
+        Returns:
+            True if the file exists, False otherwise
+        """
+        url = f'{self.BASE_URL}/repos/{repository}/contents/{file_path}'
+        params = {}
+        if branch:
+            params['ref'] = branch
+
+        try:
+            await self._make_request(url, params)
+            return True
+        except Exception:
+            return False

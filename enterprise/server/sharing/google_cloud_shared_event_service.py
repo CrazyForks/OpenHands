@@ -17,9 +17,7 @@ from typing import AsyncGenerator
 from uuid import UUID
 
 from fastapi import Request
-from google.cloud import storage
 from google.cloud.storage.bucket import Bucket
-from google.cloud.storage.client import Client
 from pydantic import Field
 from server.sharing.shared_conversation_info_service import (
     SharedConversationInfoService,
@@ -38,6 +36,7 @@ from openhands.app_server.event.google_cloud_event_service import (
     GoogleCloudEventService,
 )
 from openhands.app_server.event_callback.event_callback_models import EventKind
+from openhands.app_server.file_store.gcs_client import get_gcs_client
 from openhands.app_server.services.injector import InjectorState
 from openhands.sdk import Event
 
@@ -147,9 +146,8 @@ class GoogleCloudSharedEventServiceInjector(SharedEventServiceInjector):
                 db_session=db_session
             )
 
-            bucket_name = self.bucket_name
-            storage_client: Client = storage.Client()
-            bucket: Bucket = storage_client.bucket(bucket_name)
+            # Use shared client to avoid connection pool exhaustion
+            bucket: Bucket = get_gcs_client().bucket(self.bucket_name)
 
             service = GoogleCloudSharedEventService(
                 shared_conversation_info_service=shared_conversation_info_service,

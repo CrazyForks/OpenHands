@@ -17,7 +17,16 @@ from server.sharing.shared_conversation_models import SharedConversation
 
 from openhands.agent_server.models import EventPage, EventSortOrder
 from openhands.app_server.event.event_service import EventService
+from openhands.app_server.file_store import gcs_client
 from openhands.sdk.llm import MetricsSnapshot, TokenUsage
+
+
+@pytest.fixture(autouse=True)
+def reset_gcs_client():
+    """Reset the shared GCS client singleton before each test."""
+    gcs_client._client = None
+    yield
+    gcs_client._client = None
 
 
 @pytest.fixture
@@ -457,7 +466,7 @@ class TestGoogleCloudSharedEventServiceInjector:
 
         with (
             patch(
-                'server.sharing.google_cloud_shared_event_service.storage.Client',
+                'openhands.app_server.file_store.gcs_client.storage.Client',
                 return_value=mock_storage_client,
             ),
             patch(
@@ -496,7 +505,7 @@ class TestGoogleCloudSharedEventServiceInjector:
 
         with (
             patch(
-                'server.sharing.google_cloud_shared_event_service.storage.Client',
+                'openhands.app_server.file_store.gcs_client.storage.Client',
                 return_value=mock_storage_client,
             ),
             patch(
@@ -533,7 +542,7 @@ class TestGoogleCloudSharedEventServiceInjector:
 
         with (
             patch(
-                'server.sharing.google_cloud_shared_event_service.storage.Client',
+                'openhands.app_server.file_store.gcs_client.storage.Client',
                 return_value=mock_storage_client,
             ),
             patch(
@@ -575,7 +584,7 @@ class TestGoogleCloudSharedEventServiceInjector:
         mock_storage_client.bucket.return_value = mock_bucket
 
         with patch(
-            'server.sharing.google_cloud_shared_event_service.storage.Client',
+            'openhands.app_server.file_store.gcs_client.storage.Client',
             return_value=mock_storage_client,
         ):
             with patch(

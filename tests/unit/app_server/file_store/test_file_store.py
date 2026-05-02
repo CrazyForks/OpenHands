@@ -325,11 +325,15 @@ class TestInMemoryFileStore(TestCase, _StorageTest):
 
 
 @patch(
-    'openhands.app_server.file_store.google_cloud.storage.Client',
+    'openhands.app_server.file_store.gcs_client.storage.Client',
     _MockGoogleCloudClient,
 )
 class TestGoogleCloudFileStore(TestCase, _StorageTest):
     def setUp(self):
+        # Reset the singleton client before each test
+        import openhands.app_server.file_store.gcs_client as gcs_client
+
+        gcs_client._client = None
         self.store = GoogleCloudFileStore(bucket_name='dear-liza')
 
 

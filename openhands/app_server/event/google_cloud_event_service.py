@@ -8,14 +8,13 @@ from typing import AsyncGenerator, Iterator
 
 from fastapi import Request
 from google.api_core.exceptions import NotFound
-from google.cloud import storage
 from google.cloud.storage.blob import Blob
 from google.cloud.storage.bucket import Bucket
-from google.cloud.storage.client import Client
 
 from openhands.app_server.config import get_app_conversation_info_service
 from openhands.app_server.event.event_service import EventService, EventServiceInjector
 from openhands.app_server.event.event_service_base import EventServiceBase
+from openhands.app_server.file_store.gcs_client import get_gcs_client
 from openhands.app_server.services.injector import InjectorState
 from openhands.sdk import Event
 
@@ -77,9 +76,8 @@ class GoogleCloudEventServiceInjector(EventServiceInjector):
         ):
             user_id = await user_context.get_user_id()
 
-            bucket_name = self.bucket_name
-            storage_client: Client = storage.Client()
-            bucket: Bucket = storage_client.bucket(bucket_name)
+            # Use shared client to avoid connection pool exhaustion
+            bucket: Bucket = get_gcs_client().bucket(self.bucket_name)
 
             yield GoogleCloudEventService(
                 prefix=self.prefix,

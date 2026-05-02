@@ -1,13 +1,13 @@
 import os
 
 from google.api_core.exceptions import NotFound
-from google.cloud import storage
 from google.cloud.storage.blob import Blob
 from google.cloud.storage.bucket import Bucket
 from google.cloud.storage.client import Client
 from pydantic import Field, PrivateAttr
 
 from openhands.app_server.file_store.files import FileStore
+from openhands.app_server.file_store.gcs_client import get_gcs_client
 
 
 class GoogleCloudFileStore(FileStore):
@@ -16,12 +16,11 @@ class GoogleCloudFileStore(FileStore):
     If GOOGLE_APPLICATION_CREDENTIALS is defined in the environment it will be used
     for authentication. Otherwise access will be anonymous.
 
-    The storage client and bucket are initialized lazily on first access.
+    Uses a shared GCS client to avoid connection pool exhaustion under load.
     """
 
     bucket_name: str = Field(default='')
 
-    _storage_client: Client | None = PrivateAttr(default=None)
     _bucket: Bucket | None = PrivateAttr(default=None)
 
     def _get_bucket_name(self) -> str:
@@ -32,10 +31,8 @@ class GoogleCloudFileStore(FileStore):
 
     @property
     def storage_client(self) -> Client:
-        """Get the storage client, initializing lazily on first access."""
-        if self._storage_client is None:
-            self._storage_client = storage.Client()
-        return self._storage_client
+        """Get the shared storage client."""
+        return get_gcs_client()
 
     @property
     def bucket(self) -> Bucket:

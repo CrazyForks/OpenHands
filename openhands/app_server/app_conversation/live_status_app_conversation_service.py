@@ -17,6 +17,7 @@ from pydantic import Field, SecretStr, TypeAdapter
 
 from openhands.agent_server.models import (
     ConversationInfo,
+    EventSortOrder,
     SendMessageRequest,
     StartConversationRequest,
     TextContent,
@@ -93,7 +94,9 @@ from openhands.app_server.utils.llm_metadata import (
     get_llm_metadata,
     should_set_litellm_extra_body,
 )
-from openhands.sdk import Agent, AgentContext, LocalWorkspace
+from openhands.sdk import Agent, AgentContext, LocalWorkspace, MessageEvent
+from openhands.sdk.agent.acp_agent import ACPAgent
+from openhands.sdk.event.acp_tool_call import ACPToolCallEvent
 from openhands.sdk.hooks import HookConfig
 from openhands.sdk.llm import LLM
 from openhands.sdk.plugin import PluginSource
@@ -118,6 +121,11 @@ from openhands.tools.preset.planning import (
 
 _conversation_info_type_adapter = TypeAdapter(list[ConversationInfo | None])
 _logger = logging.getLogger(__name__)
+
+# Maximum events fetched when synthesizing a bootstrap-prompt resume message
+# (Solution A of issue #14260).  Keeps the resume message from growing unbounded
+# on very long conversations.
+_ACP_RESUME_MAX_EVENTS = 200
 
 
 # Planning agent instruction to prevent "Ready to proceed?" behavior
@@ -1441,6 +1449,76 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
             _logger.warning(f'Failed to load skills: {e}', exc_info=True)
             return request
 
+    async def _synthesize_acp_resume_initial_message(
+        self, conversation_id: UUID
+    ) -> SendMessageRequest | None:
+        """Build a bootstrap-prompt resume message from the durable event store.
+
+        When a sandbox is recycled the ACP server's own session storage is gone,
+        so ``session/load`` cannot be used.  Instead we start a fresh
+        ``new_session`` and inject the prior event history as the first user
+        message (Solution A of issue #14260).
+
+        Returns ``None`` when there are no prior events (fresh conversation).
+        """
+        all_events: list = []
+        page_id: str | None = None
+        while len(all_events) < _ACP_RESUME_MAX_EVENTS:
+            page = await self.event_service.search_events(
+                conversation_id,
+                sort_order=EventSortOrder.TIMESTAMP,
+                page_id=page_id,
+                limit=100,
+            )
+            all_events.extend(page.items)
+            if page.next_page_id is None:
+                break
+            page_id = page.next_page_id
+
+        relevant = [
+            e for e in all_events if isinstance(e, (MessageEvent, ACPToolCallEvent))
+        ]
+        if not relevant:
+            return None
+
+        lines: list[str] = [
+            '<<RESUMED CONVERSATION>>',
+            '',
+            (
+                'The sandbox was recycled and the ACP agent session storage was lost. '
+                'The following is the conversation history from the previous session. '
+                'Please treat this as context and continue from where we left off.'
+            ),
+            '',
+        ]
+        for event in relevant:
+            if isinstance(event, MessageEvent):
+                role = event.llm_message.role
+                role_label = '[USER]' if role == 'user' else '[ASSISTANT]'
+                content = event.llm_message.content
+                if isinstance(content, str):
+                    text = content.strip()
+                else:
+                    text = ' '.join(
+                        c.text for c in content if hasattr(c, 'text')
+                    ).strip()
+                if text:
+                    lines.append(f'{role_label}: {text}')
+                    lines.append('')
+            elif isinstance(event, ACPToolCallEvent):
+                status = 'failed' if event.is_error else (event.status or 'completed')
+                name = event.title or event.tool_kind or 'tool'
+                lines.append(f'[TOOL USE: {name}] ({status})')
+                lines.append('')
+
+        lines.append('--- End of prior session ---')
+        resume_text = '\n'.join(lines)
+
+        return SendMessageRequest(
+            role='user',
+            content=[TextContent(type='text', text=resume_text)],
+        )
+
     async def _build_acp_start_conversation_request(
         self,
         sandbox: SandboxInfo,
@@ -1495,6 +1573,22 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                         'API-provided secret %r overrides existing secret', name
                     )
                 secrets[name] = StaticSecret(value=value)
+
+        # --- bootstrap-prompt resume (Solution A of issue #14260) -----------
+        # If this conversation has prior events in the durable store the sandbox
+        # was recycled and the ACP server's session storage is gone.  Synthesize
+        # the history as the first user message so the agent has context.
+        resume_msg = await self._synthesize_acp_resume_initial_message(conversation_id)
+        if resume_msg is not None:
+            if initial_message is None:
+                initial_message = resume_msg
+            else:
+                # Prepend history context to the user's new message
+                initial_message = SendMessageRequest(
+                    role='user',
+                    content=list(resume_msg.content) + list(initial_message.content),
+                    run=initial_message.run,
+                )
 
         # --- build the ACP agent ------------------------------------------
         acp_settings = user.agent_settings  # already verified to be ACPAgentSettings

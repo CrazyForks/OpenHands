@@ -14,6 +14,11 @@ from pydantic import SecretStr
 from openhands import tools  # type: ignore[attr-defined]
 from openhands.agent_server.models import ConversationInfo, Success
 from openhands.analytics import get_analytics_service, resolve_analytics_context
+from openhands.app_server.app_conversation.acp_resume import (
+    extract_acp_session_state,
+    persist_acp_state_snapshot,
+    persist_claude_session_snapshot,
+)
 from openhands.app_server.app_conversation.app_conversation_info_service import (
     AppConversationInfoService,
 )
@@ -25,6 +30,7 @@ from openhands.app_server.config import (
     depends_app_conversation_info_service,
     depends_event_service,
     depends_jwt_service,
+    depends_sandbox_service,
     get_event_callback_service,
     get_global_config,
     get_sandbox_service,
@@ -37,7 +43,12 @@ from openhands.app_server.event_callback.set_title_callback_processor import (
     SetTitleCallbackProcessor,
 )
 from openhands.app_server.integrations.provider import ProviderType
-from openhands.app_server.sandbox.sandbox_models import SandboxInfo
+from openhands.app_server.sandbox.sandbox_models import (
+    AGENT_SERVER,
+    SandboxInfo,
+    SandboxStatus,
+)
+from openhands.app_server.sandbox.sandbox_service import SandboxService
 from openhands.app_server.services.injector import InjectorState
 from openhands.app_server.services.jwt_service import JwtService
 from openhands.app_server.user.auth_user_context import AuthUserContext
@@ -50,12 +61,17 @@ from openhands.app_server.user_auth.default_user_auth import DefaultUserAuth
 from openhands.app_server.user_auth.user_auth import (
     get_for_user as get_user_auth_for_user,
 )
+from openhands.app_server.utils.docker_utils import (
+    replace_localhost_hostname_for_docker,
+)
 from openhands.sdk import ConversationExecutionStatus, Event
 from openhands.sdk.event import ConversationStateUpdateEvent
+from openhands.sdk.workspace.remote.async_remote_workspace import AsyncRemoteWorkspace
 
 router = APIRouter(prefix='/webhooks', tags=['Webhooks'])
 event_service_dependency = depends_event_service()
 app_conversation_info_service_dependency = depends_app_conversation_info_service()
+sandbox_service_dependency = depends_sandbox_service()
 jwt_dependency = depends_jwt_service()
 app_mode = get_global_config().app_mode
 _logger = logging.getLogger(__name__)
@@ -295,6 +311,77 @@ async def valid_conversation(
     return app_conversation_info
 
 
+async def _persist_acp_resume_state(
+    event: ConversationStateUpdateEvent,
+    app_conversation_info: AppConversationInfo,
+    app_conversation_info_service: AppConversationInfoService,
+    sandbox_service: SandboxService,
+) -> None:
+    session_state = extract_acp_session_state(event)
+    if session_state is None:
+        return
+
+    should_save_info = (
+        app_conversation_info.acp_session_id != session_state.session_id
+        or app_conversation_info.acp_session_cwd != session_state.cwd
+    )
+    if should_save_info:
+        app_conversation_info.acp_session_id = session_state.session_id
+        app_conversation_info.acp_session_cwd = session_state.cwd
+        await app_conversation_info_service.save_app_conversation_info(
+            app_conversation_info
+        )
+
+    file_store = get_global_config().file_store
+    if session_state.state_snapshot is not None:
+        await persist_acp_state_snapshot(
+            file_store,
+            app_conversation_info.id,
+            session_state.state_snapshot,
+        )
+
+    if app_conversation_info.agent_kind != 'acp':
+        return
+
+    try:
+        sandbox = await sandbox_service.get_sandbox(app_conversation_info.sandbox_id)
+        if (
+            sandbox is None
+            or sandbox.status != SandboxStatus.RUNNING
+            or not sandbox.exposed_urls
+        ):
+            return
+
+        agent_server_url = next(
+            (
+                exposed_url.url
+                for exposed_url in sandbox.exposed_urls
+                if exposed_url.name == AGENT_SERVER
+            ),
+            None,
+        )
+        if not agent_server_url:
+            return
+        agent_server_url = replace_localhost_hostname_for_docker(agent_server_url)
+        remote_workspace = AsyncRemoteWorkspace(
+            host=agent_server_url,
+            api_key=sandbox.session_api_key,
+            working_dir=session_state.cwd,
+        )
+        await persist_claude_session_snapshot(
+            file_store=file_store,
+            remote_workspace=remote_workspace,
+            conversation_id=app_conversation_info.id,
+            session_state=session_state,
+        )
+    except Exception:
+        _logger.warning(
+            'Failed to snapshot Claude ACP session for conversation %s',
+            app_conversation_info.id,
+            exc_info=True,
+        )
+
+
 @router.post('/conversations')
 async def on_conversation_update(
     conversation_info: ConversationInfo,
@@ -332,6 +419,9 @@ async def on_conversation_update(
         sandbox_id=sandbox_info.id,
         created_by_user_id=sandbox_info.created_by_user_id,
         llm_model=conversation_info.agent.llm.model,
+        agent_kind=existing.agent_kind,
+        acp_session_id=existing.acp_session_id,
+        acp_session_cwd=existing.acp_session_cwd,
         # Git parameters
         selected_repository=existing.selected_repository,
         selected_branch=existing.selected_branch,
@@ -392,6 +482,7 @@ async def on_event(
     conversation_id: UUID,
     app_conversation_info: AppConversationInfo = Depends(valid_conversation),
     app_conversation_info_service: AppConversationInfoService = app_conversation_info_service_dependency,
+    sandbox_service: SandboxService = sandbox_service_dependency,
     event_service: EventService = event_service_dependency,
 ) -> Success:
     """Webhook callback for when event stream events occur."""
@@ -406,6 +497,13 @@ async def on_event(
             if isinstance(event, ConversationStateUpdateEvent) and event.key == 'stats':
                 await app_conversation_info_service.process_stats_event(
                     event, conversation_id
+                )
+            if isinstance(event, ConversationStateUpdateEvent):
+                await _persist_acp_resume_state(
+                    event,
+                    app_conversation_info,
+                    app_conversation_info_service,
+                    sandbox_service,
                 )
 
         # Analytics: conversation terminal state detection

@@ -165,6 +165,14 @@ class TestSQLAppConversationInfoService:
         assert retrieved_info.trigger == sample_conversation_info.trigger
         assert retrieved_info.pr_number == sample_conversation_info.pr_number
         assert retrieved_info.llm_model == sample_conversation_info.llm_model
+        assert (
+            retrieved_info.acp_session_id
+            == sample_conversation_info.acp_session_id
+        )
+        assert (
+            retrieved_info.acp_session_cwd
+            == sample_conversation_info.acp_session_cwd
+        )
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_conversation_info(
@@ -191,6 +199,9 @@ class TestSQLAppConversationInfoService:
             trigger=ConversationTrigger.RESOLVER,
             pr_number=[789, 101112],
             llm_model='claude-3',
+            agent_kind='acp',
+            acp_session_id='session-123',
+            acp_session_cwd='/workspace/project',
             metrics=MetricsSnapshot(accumulated_token_usage=TokenUsage()),
             created_at=datetime(2024, 2, 15, 10, 30, 0, tzinfo=timezone.utc),
             updated_at=datetime(2024, 2, 15, 11, 45, 0, tzinfo=timezone.utc),
@@ -211,6 +222,9 @@ class TestSQLAppConversationInfoService:
         assert retrieved_info.trigger == original_info.trigger
         assert retrieved_info.pr_number == original_info.pr_number
         assert retrieved_info.llm_model == original_info.llm_model
+        assert retrieved_info.agent_kind == original_info.agent_kind
+        assert retrieved_info.acp_session_id == original_info.acp_session_id
+        assert retrieved_info.acp_session_cwd == original_info.acp_session_cwd
         assert retrieved_info.metrics == original_info.metrics
 
     @pytest.mark.asyncio

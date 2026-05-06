@@ -103,6 +103,8 @@ class AppConversationInfo(BaseModel):
     pr_number: list[int] = Field(default_factory=list)
     llm_model: str | None = None
     agent_kind: str = 'openhands'
+    acp_session_id: str | None = None
+    acp_session_cwd: str | None = None
 
     metrics: MetricsSnapshot | None = None
 

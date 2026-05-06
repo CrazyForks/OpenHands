@@ -23,6 +23,9 @@ from openhands.agent_server.models import (
     StartConversationRequest,
     TextContent,
 )
+from openhands.app_server.app_conversation.acp_resume import (
+    restore_acp_resume_artifacts,
+)
 from openhands.app_server.app_conversation.app_conversation_info_service import (
     AppConversationInfoService,
 )
@@ -70,6 +73,7 @@ from openhands.app_server.event_callback.event_callback_service import (
 from openhands.app_server.event_callback.set_title_callback_processor import (
     SetTitleCallbackProcessor,
 )
+from openhands.app_server.file_store.files import FileStore
 from openhands.app_server.integrations.provider import PROVIDER_TOKEN_TYPE, ProviderType
 from openhands.app_server.integrations.service_types import SuggestedTask
 from openhands.app_server.pending_messages.pending_message_service import (
@@ -178,6 +182,7 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
     web_url: str | None
     openhands_provider_base_url: str | None
     access_token_hard_timeout: timedelta | None
+    file_store: FileStore | None = None
     app_mode: str | None = None
 
     async def _get_sandbox_grouping_strategy(self) -> SandboxGroupingStrategy:
@@ -307,6 +312,13 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
 
             # Set up conversation id
             conversation_id = request.conversation_id or uuid4()
+            existing_app_conversation_info = None
+            if request.conversation_id:
+                existing_app_conversation_info = (
+                    await self.app_conversation_info_service.get_app_conversation_info(
+                        request.conversation_id
+                    )
+                )
 
             # Setup working dir based on grouping
             working_dir = sandbox_spec.working_dir
@@ -342,6 +354,12 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                     api_secrets=request.secrets,
                 )
             )
+            if isinstance(start_conversation_request, StartACPConversationRequest):
+                await self._restore_acp_resume_artifacts(
+                    existing_app_conversation_info,
+                    remote_workspace,
+                    start_conversation_request,
+                )
 
             # update status
             task.status = AppConversationStartTaskStatus.STARTING_CONVERSATION
@@ -386,11 +404,26 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
             user_id = await self.user_context.get_user_id()
             app_conversation_info = AppConversationInfo(
                 id=info.id,
-                title=f'Conversation {info.id.hex[:5]}',
+                title=(
+                    existing_app_conversation_info.title
+                    if existing_app_conversation_info
+                    and existing_app_conversation_info.title
+                    else f'Conversation {info.id.hex[:5]}'
+                ),
                 sandbox_id=sandbox.id,
                 created_by_user_id=user_id,
                 llm_model=display_model,
                 agent_kind=agent_kind,
+                acp_session_id=(
+                    existing_app_conversation_info.acp_session_id
+                    if existing_app_conversation_info
+                    else None
+                ),
+                acp_session_cwd=(
+                    existing_app_conversation_info.acp_session_cwd
+                    if existing_app_conversation_info
+                    else None
+                ),
                 # Git parameters
                 selected_repository=request.selected_repository,
                 selected_branch=request.selected_branch,
@@ -398,6 +431,9 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                 trigger=request.trigger,
                 pr_number=request.pr_number,
                 parent_conversation_id=request.parent_conversation_id,
+                tags=existing_app_conversation_info.tags
+                if existing_app_conversation_info
+                else {},
             )
             await self.app_conversation_info_service.save_app_conversation_info(
                 app_conversation_info
@@ -831,6 +867,48 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
         )
         agent_server_url = replace_localhost_hostname_for_docker(agent_server_url)
         return agent_server_url
+
+    async def _restore_acp_resume_artifacts(
+        self,
+        existing_info: AppConversationInfo | None,
+        remote_workspace: AsyncRemoteWorkspace,
+        start_request: StartACPConversationRequest,
+    ) -> None:
+        """Restore ACP resume state before recreating an ACP conversation."""
+        if (
+            existing_info is None
+            or existing_info.agent_kind != 'acp'
+            or not existing_info.acp_session_id
+            or not existing_info.acp_session_cwd
+        ):
+            return
+        if self.file_store is None:
+            _logger.warning(
+                'Cannot restore ACP session for conversation %s: no file_store',
+                existing_info.id,
+            )
+            return
+
+        try:
+            result = await restore_acp_resume_artifacts(
+                file_store=self.file_store,
+                remote_workspace=remote_workspace,
+                start_request=start_request,
+                session_id=existing_info.acp_session_id,
+                session_cwd=existing_info.acp_session_cwd,
+            )
+            _logger.info(
+                'Restored ACP resume artifacts for conversation %s: '
+                'base_state=%s claude_session=%s',
+                existing_info.id,
+                result.restored_base_state,
+                result.restored_claude_session,
+            )
+        except Exception:
+            _logger.exception(
+                'Failed to restore ACP resume artifacts for conversation %s',
+                existing_info.id,
+            )
 
     def _inherit_configuration_from_parent(
         self, request: AppConversationStartRequest, parent_info: AppConversationInfo
@@ -2136,5 +2214,6 @@ class LiveStatusAppConversationServiceInjector(AppConversationServiceInjector):
                 web_url=web_url,
                 openhands_provider_base_url=config.openhands_provider_base_url,
                 access_token_hard_timeout=access_token_hard_timeout,
+                file_store=config.file_store,
                 app_mode=app_mode,
             )

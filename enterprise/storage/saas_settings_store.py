@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from pydantic import SecretStr
 from server.auth.token_manager import TokenManager
@@ -30,6 +31,20 @@ from openhands.app_server.utils.llm import is_openhands_model
 @dataclass
 class SaasSettingsStore(SettingsStore):
     user_id: str
+    # When set, overrides the user's `current_org_id` for both `load()` and
+    # `store()`. Used to honor a request's effective org (api_key_org_id >
+    # X-Org-Id header > user.current_org_id) so an API key minted for org A
+    # used by a user whose `current_org_id` later switched to B still
+    # reads/writes settings under org A.
+    effective_org_id: UUID | None = None
+
+    def _resolve_org_id(self, user: User) -> UUID | None:
+        """Return the effective org id for this request, or the user's
+        current org id as a fallback. The caller still needs to verify
+        that the user is a member of the returned org (handled in load/
+        store by the existing org_members lookup).
+        """
+        return self.effective_org_id or user.current_org_id
 
     async def _get_user_settings_by_keycloak_id_async(
         self, keycloak_user_id: str, session=None
@@ -84,7 +99,7 @@ class SaasSettingsStore(SettingsStore):
             logger.error(f'User not found for ID {self.user_id}')
             return None
 
-        org_id = user.current_org_id
+        org_id = self._resolve_org_id(user)
         org_member: OrgMember | None = None
         for om in user.org_members:
             if om.org_id == org_id:
@@ -189,7 +204,7 @@ class SaasSettingsStore(SettingsStore):
                     logger.error(f'User not found for ID {self.user_id}')
                     return None
 
-            org_id = user.current_org_id
+            org_id = self._resolve_org_id(user)
 
             org_member: OrgMember | None = None
             for om in user.org_members:
@@ -296,13 +311,21 @@ class SaasSettingsStore(SettingsStore):
     async def get_instance(
         cls,
         user_id: str,  # type: ignore[override]
+        effective_org_id: UUID | None = None,
     ) -> SaasSettingsStore:
         """Get a SaasSettingsStore instance for the given user.
+
+        Args:
+            user_id: Keycloak user id.
+            effective_org_id: Optional org id resolved from the request
+                (see SaasUserAuth.get_effective_org_id). When None the
+                store falls back to ``user.current_org_id`` to preserve
+                legacy behavior for background / non-request callers.
 
         TODO: This method should be replaced with dependency injection.
         """
         logger.debug(f'saas_settings_store.get_instance::{user_id}')
-        return SaasSettingsStore(user_id)
+        return SaasSettingsStore(user_id, effective_org_id=effective_org_id)
 
     async def _ensure_api_key(
         self, item: Settings, org_id: str, openhands_type: bool = False

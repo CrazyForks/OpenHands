@@ -92,6 +92,53 @@ class BitbucketDCManager(Manager[BitbucketDCViewType]):
             )
             return False
 
+    async def _add_eyes_reaction(
+        self,
+        message: Message,
+        installer_user_id: str,
+        project_key: str,
+        repo_slug: str,
+    ) -> None:
+        """Best-effort 👀 acknowledgement on the triggering PR comment.
+
+        Mirrors ``GithubManager._add_reaction``: posted as soon as we've
+        decided the request will be acted on (permission check passed),
+        before view construction or conversation creation. Uses the
+        webhook installer's BBDC token (the user whose OAuth backs the
+        webhook enrollment), since the commenter's own token isn't on
+        hand from the webhook payload alone.
+
+        Any failure here is logged at INFO and swallowed — older BBDC
+        installs (< 7.0) return 404 on the reactions endpoint, and a
+        missing acknowledgement must never block conversation creation.
+        """
+        payload = message.message.get('payload') or {}
+        comment = payload.get('comment') or {}
+        pull_request = payload.get('pullRequest') or {}
+        comment_id = comment.get('id')
+        pr_id = pull_request.get('id')
+        if comment_id is None or pr_id is None:
+            return
+
+        from integrations.bitbucket_data_center.bitbucket_dc_service import (
+            SaaSBitbucketDCService,
+        )
+
+        try:
+            service = SaaSBitbucketDCService(external_auth_id=installer_user_id)
+            await service.add_comment_reaction(
+                owner=project_key,
+                repo_slug=repo_slug,
+                pr_id=int(pr_id),
+                comment_id=int(comment_id),
+                emoticon=':eyes:',
+            )
+        except Exception as e:
+            logger.info(
+                f'[Bitbucket DC] Could not add eyes reaction on '
+                f'{project_key}/{repo_slug} PR#{pr_id} comment#{comment_id}: {e}'
+            )
+
     async def receive_message(self, message: Message) -> None:
         self._confirm_incoming_source_type(message)
         if not self.is_job_requested(message):
@@ -116,6 +163,14 @@ class BitbucketDCManager(Manager[BitbucketDCViewType]):
                 f'access to {project_key}/{repo_slug}; ignoring.'
             )
             return
+
+        # Acknowledge receipt with a 👀 reaction on the triggering comment,
+        # mirroring the GitHub manager's behaviour. Best-effort: failures
+        # (e.g. legacy BBDC < 7.0 without the reactions endpoint) must not
+        # block conversation creation.
+        await self._add_eyes_reaction(
+            message, installer_user_id, project_key, repo_slug
+        )
 
         bitbucket_view = await BitbucketDCFactory.create_bitbucket_dc_view_from_payload(
             message, installer_user_id

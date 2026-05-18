@@ -141,6 +141,30 @@ class BitbucketDCResolverMixin(BitbucketDCMixinBase):
 
         await self._make_request(url, params=payload, method=RequestMethod.POST)
 
+    async def add_comment_reaction(
+        self,
+        owner: str,
+        repo_slug: str,
+        pr_id: int,
+        comment_id: int,
+        emoticon: str,
+    ) -> None:
+        """Post a reaction emoticon on a Bitbucket Data Center PR comment.
+
+        Uses BBDC's comment reactions endpoint (Bitbucket Server / Data
+        Center 7.0+). Common emoticon strings: ``:eyes:``, ``:+1:``,
+        ``:-1:``, ``:heart:``, ``:smile:``. Callers should treat reaction
+        failures as non-fatal — older BBDC versions return 404 on this
+        endpoint and a missing reaction should not block event processing.
+        """
+        url = (
+            f'{self.BASE_URL}/projects/{owner}/repos/{repo_slug}'
+            f'/pull-requests/{pr_id}/comments/{comment_id}/reactions'
+        )
+        await self._make_request(
+            url, params={'emoticon': emoticon}, method=RequestMethod.POST
+        )
+
     async def user_has_write_access(self, owner: str, repo_slug: str) -> bool:
         """Self-permission analog of :meth:`user_has_write_access_for`.
 

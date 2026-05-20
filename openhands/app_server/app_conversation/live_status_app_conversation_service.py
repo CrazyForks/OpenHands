@@ -212,32 +212,104 @@ def _strip_terminal_boilerplate(text: str) -> str:
     return '\n'.join(out).strip()
 
 
+# Provider-internal metadata keys that add no value to a resume message.
+# Codex execute tools include call_id, process_id, turn_id, timestamps, etc.
+# 'cwd' is always the sandbox working directory — after path sanitization it
+# shows as the sandbox ID, which is meaningless; drop it too.
+_RAW_INPUT_NOISE_KEYS = frozenset(
+    {
+        'call_id',
+        'process_id',
+        'turn_id',
+        'started_at_ms',
+        'completed_at_ms',
+        'parsed_cmd',
+        'source',
+        'auto_approved',
+        'cwd',
+    }
+)
+
+
+def _extract_output_text(raw_output: object) -> str:
+    """Extract the human-readable text from a tool's raw_output.
+
+    Some ACP providers (e.g. Codex) wrap stdout/stderr in a dict alongside
+    metadata.  We pull out just the meaningful content so the agent sees the
+    actual command output rather than a Python dict repr.
+    """
+    if isinstance(raw_output, dict):
+        stdout = str(raw_output.get('stdout', '') or '').strip()
+        stderr = str(raw_output.get('stderr', '') or '').strip()
+        parts = []
+        if stdout:
+            parts.append(stdout)
+        if stderr:
+            parts.append(f'[stderr]: {stderr}')
+        if parts:
+            return '\n'.join(parts)
+        # dict but no stdout/stderr keys — fall through to repr
+    return str(raw_output)
+
+
 def _format_raw_input(raw: dict, max_chars: int, is_edit_diff: bool = False) -> str:
     """Render a tool's raw_input dict in a readable form.
 
-    For Edit-diff tools (old_string / new_string present) only the filename is
-    shown — the actual changes are on the persistent /workspace volume and the
-    agent can re-read the file.  Showing large diffs in the resume adds noise
-    without adding information the agent couldn't recover itself.
+    For edit-diff tools only the filename is shown — the file on the
+    persistent /workspace PVC is the source of truth.
 
-    For other tools, multiline string values (file content, scripts) are rendered
-    with real newlines so the agent reads actual code, not escaped repr strings.
-    Single-line values are rendered as ``key=value`` on one line.
+    For Codex-style changes dicts (``{path: {type, content}}``) the file
+    contents are rendered under their sanitized basenames.
+
+    For execute tools internal metadata keys (call_id, process_id, …) are
+    stripped; a list-valued ``command`` field is unwrapped to its last element.
+
+    For all other tools, multiline string values are rendered with real
+    newlines; single-line values as ``key=value``.
     """
     if is_edit_diff:
+        # Patch/diff: file is on /workspace — just show the filename.
         fp = _sanitize_paths(str(raw.get('file_path', '')))
         return f'file={fp}'
-    parts: list[str] = []
+
+    # Codex-style bulk changes: {abs_path: {type, content}, …}
+    if 'changes' in raw and isinstance(raw.get('changes'), dict):
+        changes = raw['changes']
+        parts: list[str] = []
+        for path, change in changes.items():
+            basename = os.path.basename(str(path)) if path else 'file'
+            content = str(change.get('content', '') or '')
+            change_type = change.get('type', 'edit')
+            if content:
+                parts.append(
+                    f'{change_type} {basename}:\n{_truncate_text(content, 400)}'
+                )
+            else:
+                parts.append(f'{change_type} {basename}')
+        return _truncate_text('\n'.join(parts), max_chars)
+
+    # General case: filter noise keys, extract command list, sanitize values.
+    cleaned: dict[str, object] = {}
     for k, v in raw.items():
+        if k in _RAW_INPUT_NOISE_KEYS:
+            continue
+        # Unwrap list-valued command: ['/bin/zsh', '-lc', 'actual cmd'] → 'actual cmd'
+        if k == 'command' and isinstance(v, list) and v:
+            cleaned[k] = v[-1]
+        else:
+            cleaned[k] = v
+
+    out_parts: list[str] = []
+    for k, v in cleaned.items():
         if isinstance(v, str):
             v_san = _sanitize_paths(v)
             if '\n' in v_san:
-                parts.append(f'{k}:\n{v_san}')
+                out_parts.append(f'{k}:\n{v_san}')
             else:
-                parts.append(f'{k}={v_san}')
+                out_parts.append(f'{k}={v_san}')
         else:
-            parts.append(f'{k}={_sanitize_paths(str(v))}')
-    return _truncate_text('\n'.join(parts), max_chars)
+            out_parts.append(f'{k}={_sanitize_paths(str(v))}')
+    return _truncate_text('\n'.join(out_parts), max_chars)
 
 
 def _sanitize_paths(text: str) -> str:
@@ -1667,7 +1739,9 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                 if not event.raw_input and not event.raw_output and not event.is_error:
                     continue
                 status = 'failed' if event.is_error else (event.status or 'completed')
-                name = event.title or event.tool_kind or 'tool'
+                # Sanitize the title: some providers (Codex) embed absolute
+                # paths directly in the tool name.
+                name = _sanitize_paths(event.title or event.tool_kind or 'tool')
                 raw_in = dict(event.raw_input) if event.raw_input else {}
                 is_edit_diff = _is_patch_edit(event)
                 detail_parts: list[str] = []
@@ -1677,7 +1751,7 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                     )
                 if event.raw_output:
                     raw_out = _strip_terminal_boilerplate(
-                        _sanitize_paths(str(event.raw_output))
+                        _sanitize_paths(_extract_output_text(event.raw_output))
                     )
                     # For failed runs show the tail (failure details), not the head
                     # (passing tests). Failures are always at the end of pytest output.
@@ -1707,7 +1781,7 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                 msg = getattr(event.action, 'message', None) if event.action else None
                 if msg and isinstance(msg, str):
                     lines.append(
-                        f'[AGENT]: {_truncate_text(msg.strip(), _ACP_RESUME_MESSAGE_MAX_CHARS)}'
+                        f'[AGENT]: {_truncate_text(_sanitize_paths(msg.strip()), _ACP_RESUME_MESSAGE_MAX_CHARS)}'
                     )
                     lines.append('')
 

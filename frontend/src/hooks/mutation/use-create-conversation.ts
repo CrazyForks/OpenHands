@@ -3,7 +3,6 @@ import V1ConversationService from "#/api/conversation-service/v1-conversation-se
 import { PluginSpec } from "#/api/conversation-service/v1-conversation-service.types";
 import { SuggestedTask } from "#/utils/types";
 import { Provider } from "#/types/settings";
-import { useTracking } from "#/hooks/use-tracking";
 import { useConversationLimitStore } from "#/stores/conversation-limit-store";
 import {
   isConcurrencyLimitError,
@@ -35,7 +34,6 @@ interface CreateConversationResponse {
 
 export const useCreateConversation = () => {
   const queryClient = useQueryClient();
-  const { trackConversationCreated } = useTracking();
   const { showLimitModal } = useConversationLimitStore();
 
   return useMutation({
@@ -78,11 +76,7 @@ export const useCreateConversation = () => {
         is_v1: true,
       };
     },
-    onSuccess: async (_, { repository }) => {
-      trackConversationCreated({
-        hasRepository: !!repository,
-      });
-
+    onSuccess: async () => {
       queryClient.removeQueries({
         queryKey: ["user", "conversations"],
       });

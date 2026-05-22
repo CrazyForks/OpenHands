@@ -13,7 +13,6 @@ if not os.getenv('OPENHANDS_CONFIG_CLS'):
 os.environ['SERVE_FRONTEND'] = 'false'
 
 from fastapi import Request, status  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from server.auth.auth_error import ExpiredError, NoCredentialsError  # noqa: E402
 from server.auth.constants import (  # noqa: E402
@@ -26,7 +25,10 @@ from server.auth.constants import (  # noqa: E402
 )
 from server.constants import PERMITTED_CORS_ORIGINS  # noqa: E402
 from server.logger import logger  # noqa: E402
-from server.middleware import SetAuthCookieMiddleware  # noqa: E402
+from server.middleware import (  # noqa: E402
+    ApiKeyAwareCORSMiddleware,
+    SetAuthCookieMiddleware,
+)
 from server.rate_limit import setup_rate_limit_handler  # noqa: E402
 from server.routes.api_keys import api_router as api_keys_router  # noqa: E402
 from server.routes.auth import api_router, oauth_router  # noqa: E402
@@ -36,7 +38,6 @@ from server.routes.github_proxy import add_github_proxy_routes  # noqa: E402
 from server.routes.integration.jira import jira_integration_router  # noqa: E402
 from server.routes.integration.jira_dc import jira_dc_integration_router  # noqa: E402
 from server.routes.integration.slack import slack_router  # noqa: E402
-from server.routes.mcp_patch import patch_mcp_server  # noqa: E402
 from server.routes.oauth_device import oauth_device_router  # noqa: E402
 from server.routes.org_invitations import (  # noqa: E402
     accept_router as invitation_accept_router,
@@ -68,8 +69,6 @@ from openhands.app_server.middleware import (  # noqa: E402
 from openhands.app_server.static import SPAStaticFiles  # noqa: E402
 
 directory = os.getenv('FRONTEND_DIRECTORY', './frontend/build')
-
-patch_mcp_server()
 
 
 @base_app.get('/saas')
@@ -170,11 +169,8 @@ base_app.include_router(email_router)  # Add routes for email management
 
 
 base_app.add_middleware(
-    CORSMiddleware,
+    ApiKeyAwareCORSMiddleware,
     allow_origins=PERMITTED_CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
 )
 base_app.add_middleware(CacheControlMiddleware)
 base_app.middleware('http')(SetAuthCookieMiddleware())

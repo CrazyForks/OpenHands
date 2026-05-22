@@ -7,7 +7,6 @@ from typing import AsyncContextManager
 import httpx
 from fastapi import Depends, Request
 from pydantic import Field, SecretStr
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import the event_callback module to ensure all processors are registered
 import openhands.app_server.event_callback  # noqa: F401
@@ -51,6 +50,10 @@ from openhands.app_server.sandbox.sandbox_service import (
 from openhands.app_server.sandbox.sandbox_spec_service import (
     SandboxSpecService,
     SandboxSpecServiceInjector,
+)
+from openhands.app_server.services.db_session import (  # noqa: F401  (re-exported)
+    depends_db_session,
+    get_db_session,
 )
 from openhands.app_server.services.db_session_injector import (
     DbSessionInjector,
@@ -118,6 +121,14 @@ def get_openhands_provider_base_url() -> str | None:
     return os.getenv('OPENHANDS_PROVIDER_BASE_URL') or os.getenv('LLM_BASE_URL') or None
 
 
+def get_default_tavily_api_key() -> str | None:
+    """Return the Tavily API key from environment, if configured.
+
+    Falls back to SEARCH_API_KEY for backward compatibility.
+    """
+    return os.getenv('TAVILY_API_KEY') or os.getenv('SEARCH_API_KEY') or None
+
+
 # The SDK auto-fills this URL as the default for openhands/ and litellm_proxy/
 # models.  Deployments (e.g. staging) may use a different LLM proxy, configured
 # via OPENHANDS_PROVIDER_BASE_URL.
@@ -163,10 +174,14 @@ def resolve_provider_llm_base_url(
 
 
 def _get_default_lifespan():
-    # Check legacy parameters for saas mode. If we are in SAAS mode do not apply
-    # OpenHands alembic migrations
+    # Check legacy parameters for saas mode. If we are in SAAS mode use
+    # SaasAppLifespanService to initialize PostHog analytics
     if 'saas' in (os.getenv('OPENHANDS_CONFIG_CLS') or '').lower():
-        return None
+        from server.app_lifespan.saas_app_lifespan_service import (
+            SaasAppLifespanService,
+        )
+
+        return SaasAppLifespanService()
     return OssAppLifespanService()
 
 
@@ -193,6 +208,10 @@ class AppServerConfig(OpenHandsModel):
     openhands_provider_base_url: str | None = Field(
         default_factory=get_openhands_provider_base_url,
         description='Base URL for the OpenHands provider',
+    )
+    tavily_api_key: str | None = Field(
+        default_factory=get_default_tavily_api_key,
+        description='Tavily API key for search integration (proxied via MCP server)',
     )
     # Dependency Injection Injectors
     llm_model: LLMModelServiceInjector | None = None
@@ -385,13 +404,7 @@ def config_from_env() -> AppServerConfig:
         )
 
     if config.app_conversation is None:
-        tavily_api_key = None
-        tavily_api_key_str = os.getenv('TAVILY_API_KEY') or os.getenv('SEARCH_API_KEY')
-        if tavily_api_key_str:
-            tavily_api_key = SecretStr(tavily_api_key_str)
-        config.app_conversation = LiveStatusAppConversationServiceInjector(
-            tavily_api_key=tavily_api_key
-        )
+        config.app_conversation = LiveStatusAppConversationServiceInjector()
 
     if config.pending_message is None:
         from openhands.app_server.pending_messages.pending_message_service import (
@@ -508,12 +521,6 @@ def get_jwt_service(
     return injector.context(state, request)
 
 
-def get_db_session(
-    state: InjectorState, request: Request | None = None
-) -> AsyncContextManager[AsyncSession]:
-    return get_global_config().db_session.context(state, request)
-
-
 def get_app_lifespan_service() -> AppLifespanService | None:
     config = get_global_config()
     return config.lifespan
@@ -581,10 +588,6 @@ def depends_jwt_service():
     injector = get_global_config().jwt
     assert injector is not None
     return Depends(injector.depends)
-
-
-def depends_db_session():
-    return Depends(get_global_config().db_session.depends)
 
 
 def get_llm_model_service(

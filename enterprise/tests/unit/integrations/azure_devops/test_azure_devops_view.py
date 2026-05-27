@@ -77,6 +77,11 @@ def _make_work_item_message(body: str = '@openhands please fix work item') -> Me
                 },
                 'resource': {
                     'id': 42,
+                    'revisedBy': {
+                        'id': 'ado-revised-user-id',
+                        'displayName': 'Alice Revised',
+                        'uniqueName': 'alice.revised@example.com',
+                    },
                     'fields': {
                         'System.TeamProject': 'Project',
                         'System.ChangedBy': {
@@ -138,7 +143,8 @@ async def test_factory_creates_work_item_comment_view():
     assert view.full_repo_name == 'alonaking/Project/Project'
     assert view.issue_number == 42
     assert view.comment_body == '@openhands please fix work item'
-    assert view.user_info.username == 'Alice Example'
+    assert view.user_info.user_id == 'ado-revised-user-id'
+    assert view.user_info.username == 'Alice Revised'
 
 
 @pytest.mark.asyncio

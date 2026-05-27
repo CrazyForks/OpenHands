@@ -301,6 +301,9 @@ class AzureDevOpsFactory:
         if AzureDevOpsFactory.event_key(message) == PR_COMMENT_EVENT:
             return (resource.get('comment') or {}).get('author') or {}
         if AzureDevOpsFactory.event_key(message) == WORK_ITEM_COMMENT_EVENT:
+            revised_by = resource.get('revisedBy')
+            if isinstance(revised_by, dict):
+                return revised_by
             changed_by = (resource.get('fields') or {}).get('System.ChangedBy')
             if isinstance(changed_by, dict):
                 return changed_by

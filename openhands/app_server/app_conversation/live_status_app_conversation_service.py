@@ -137,35 +137,12 @@ Your role ends when the plan is finalized. Implementation is handled by the code
 
 # --- ACP session-resume persistence (issue #14260, Solution B) -------------
 #
-# Root directory inside the runtime sandbox for ACP server session storage.
-# ``/workspace`` is the PVC mount that survives sandbox recycles (its
-# ownerReference points to the Deployment, not the Pod), so pointing each
-# ACP server's data directory into a subdirectory here lets the server load
-# its own past sessions on a fresh sandbox.
-_ACP_PERSIST_ROOT: str = '/workspace'
-
-# Per-provider env var that redirects the ACP server's data directory.
-# Gemini CLI has no equivalent env var and is intentionally omitted —
-# for Gemini, native ``session/load`` resume is not viable; the bootstrap-
-# prompt resume (Solution A) remains the fallback there.
-_ACP_PERSIST_ENV_BY_SERVER: dict[str, tuple[str, str]] = {
-    'claude-code': ('CLAUDE_CONFIG_DIR', '.claude'),
-    'codex': ('CODEX_HOME', '.codex'),
-}
-
-
-def _acp_persist_env(acp_server: str) -> dict[str, str]:
-    """Return env vars that relocate an ACP server's data dir onto /workspace.
-
-    Returns an empty dict for providers without a relocation env var
-    (e.g. ``gemini-cli``) or for ``acp_server='custom'`` where the user
-    already manages their own environment via :attr:`acp_env`.
-    """
-    spec = _ACP_PERSIST_ENV_BY_SERVER.get(acp_server)
-    if spec is None:
-        return {}
-    env_var, subdir = spec
-    return {env_var: f'{_ACP_PERSIST_ROOT}/{subdir}'}
+# The ACP server's session storage (`~/.claude/projects`, `~/.codex/sessions`)
+# must survive a sandbox recycle for `session/load` resume to work. The SDK
+# relocates each provider's data dir onto the durable, per-conversation
+# `<persistence_dir>/acp/<provider>` tree (under `/workspace`) when
+# `ACPAgent.acp_isolate_data_dir` is set (software-agent-sdk #1019); the builder
+# flips that flag on rather than hand-injecting CLAUDE_CONFIG_DIR/CODEX_HOME.
 
 
 @dataclass
@@ -1553,18 +1530,6 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
         acp_settings = user.agent_settings  # already verified to be ACPAgentSettings
         assert isinstance(acp_settings, ACPAgentSettings)
 
-        # Relocate the ACP server's own session storage onto the persistent
-        # /workspace volume.  Without this, Claude Code / Codex store
-        # sessions in ``$HOME``, which is wiped on sandbox recycle — and
-        # ``session/load`` then has nothing to load even when we hand it a
-        # valid session id.  Explicit user-set entries in ``acp_env`` win
-        # over our defaults so power users can override the path.
-        persist_env = _acp_persist_env(acp_settings.acp_server)
-        merged_acp_env: dict[str, str] = {
-            **persist_env,
-            **dict(acp_settings.acp_env or {}),
-        }
-
         # Pass user secrets via AgentContext. The SDK renders them as a
         # <CUSTOM_SECRETS> block in the ACP prompt (so the agent knows the
         # names) and ``ACPAgent._start_acp_server`` gap-fills any that
@@ -1575,10 +1540,25 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
         # eagerly hit the auth service for every ``LookupSecret`` on every
         # conversation start, from the wrong process.
         agent_context = AgentContext(secrets=secrets) if secrets else None
-        settings_update: dict[str, Any] = {'acp_env': merged_acp_env}
+        settings_update: dict[str, Any] = {}
         if agent_context is not None:
             settings_update['agent_context'] = agent_context
         acp_agent = acp_settings.model_copy(update=settings_update).create_agent()
+
+        # Relocate the ACP server's data/session dir onto the durable,
+        # per-conversation ``<persistence_dir>/acp/<provider>`` tree (under the
+        # ``/workspace`` PVC) so it survives a sandbox recycle AND stays isolated
+        # when several of a user's conversations share one sandbox. The SDK owns
+        # the relocation (``ACPAgent.acp_isolate_data_dir``, software-agent-sdk
+        # #1019); we flip it on for cloud — replacing the old manual
+        # ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` injection into the deprecated
+        # ``acp_env`` channel. Now also covers gemini's ``HOME`` (isolation only;
+        # gemini resume stays on the Solution-A bootstrap path).
+        #
+        # TODO: drop the guard once OpenHands pins to an SDK release that
+        # includes ``ACPAgent.acp_isolate_data_dir``.
+        if 'acp_isolate_data_dir' in type(acp_agent).model_fields:
+            acp_agent = acp_agent.model_copy(update={'acp_isolate_data_dir': True})
 
         # Hand the agent the durable session id (if any) so a fresh sandbox
         # can resume the prior ACP session even though ``base_state.json``

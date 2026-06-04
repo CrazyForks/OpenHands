@@ -3392,9 +3392,11 @@ class TestBuildAcpStartConversationRequestPersistence:
 
     Two complementary pieces:
 
-    1. ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` are injected into ``acp_env`` so
-       each ACP server's own session storage lands on the persistent
-       ``/workspace`` PVC, surviving sandbox recycles.
+    1. ``ACPAgent.acp_isolate_data_dir`` is flipped on so the SDK relocates each
+       server's session storage onto the durable, per-conversation
+       ``<persistence_dir>/acp/<provider>`` tree (under the ``/workspace`` PVC),
+       surviving sandbox recycles AND isolating conversations that share a
+       sandbox (software-agent-sdk #1019).
     2. ``acp_resume_session_id`` is set on the ``ACPAgent`` from the
        durably-mirrored ``AppConversationInfo.acp_session_id`` so the SDK
        calls ``session/load`` on the next launch even after a sandbox
@@ -3474,56 +3476,28 @@ class TestBuildAcpStartConversationRequestPersistence:
         )
 
     @pytest.mark.asyncio
-    async def test_claude_code_injects_claude_config_dir(self, service, tmp_path):
-        """``claude-code`` gets ``CLAUDE_CONFIG_DIR=/workspace/.claude``."""
-        user = self._make_acp_user(acp_server='claude-code')
+    async def test_sets_acp_isolate_data_dir(self, service, tmp_path):
+        """The builder flips ``ACPAgent.acp_isolate_data_dir`` on for every provider.
 
-        request = await self._call_build(service, user, tmp_path)
-
-        assert request.agent.acp_env.get('CLAUDE_CONFIG_DIR') == '/workspace/.claude'
-        # CODEX_HOME must not leak across providers.
-        assert 'CODEX_HOME' not in request.agent.acp_env
-
-    @pytest.mark.asyncio
-    async def test_codex_injects_codex_home(self, service, tmp_path):
-        """``codex`` gets ``CODEX_HOME=/workspace/.codex``."""
-        user = self._make_acp_user(acp_server='codex')
-
-        request = await self._call_build(service, user, tmp_path)
-
-        assert request.agent.acp_env.get('CODEX_HOME') == '/workspace/.codex'
-        assert 'CLAUDE_CONFIG_DIR' not in request.agent.acp_env
-
-    @pytest.mark.asyncio
-    async def test_gemini_cli_does_not_inject_persistence_env(self, service, tmp_path):
-        """Gemini CLI has no relocation env var; no var must be injected.
-
-        For Gemini, native session/load resume is not viable; Solution A
-        (bootstrap-prompt resume) remains the fallback.
+        The SDK then relocates each CLI's data/session dir onto the durable,
+        per-conversation ``<persistence_dir>/acp/<provider>`` tree
+        (software-agent-sdk #1019) — replacing the old manual
+        ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` injection into ``acp_env``.
         """
-        user = self._make_acp_user(acp_server='gemini-cli')
+        try:
+            from openhands.sdk.agent import ACPAgent  # type: ignore[attr-defined]
+        except ImportError:
+            pytest.skip('ACPAgent not importable in this SDK build')
+        if 'acp_isolate_data_dir' not in ACPAgent.model_fields:
+            pytest.skip('SDK does not expose acp_isolate_data_dir yet')
 
-        request = await self._call_build(service, user, tmp_path)
-
-        assert 'CLAUDE_CONFIG_DIR' not in request.agent.acp_env
-        assert 'CODEX_HOME' not in request.agent.acp_env
-
-    @pytest.mark.asyncio
-    async def test_user_set_claude_config_dir_overrides_default(
-        self, service, tmp_path
-    ):
-        """A user-set ``CLAUDE_CONFIG_DIR`` in ``acp_env`` wins over the default.
-
-        Lets power users opt out of the default persist location.
-        """
-        user = self._make_acp_user(
-            acp_server='claude-code',
-            acp_env={'CLAUDE_CONFIG_DIR': '/custom/claude/path'},
-        )
-
-        request = await self._call_build(service, user, tmp_path)
-
-        assert request.agent.acp_env.get('CLAUDE_CONFIG_DIR') == '/custom/claude/path'
+        for server in ('claude-code', 'codex', 'gemini-cli'):
+            user = self._make_acp_user(acp_server=server)
+            request = await self._call_build(service, user, tmp_path)
+            assert request.agent.acp_isolate_data_dir is True
+            # The SDK owns relocation now; no hand-injected data-dir env vars.
+            assert 'CLAUDE_CONFIG_DIR' not in request.agent.acp_env
+            assert 'CODEX_HOME' not in request.agent.acp_env
 
     @pytest.mark.asyncio
     async def test_acp_resume_session_id_passed_when_stored(

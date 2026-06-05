@@ -13,6 +13,7 @@ from integrations.jira_dc.jira_dc_view import (
     JiraDcFactory,
     JiraDcNewConversationView,
 )
+from pydantic import SecretStr
 
 from openhands.app_server.integrations.service_types import ProviderType, Repository
 
@@ -105,7 +106,7 @@ def _make_start_conversation_patches(user_token=None, token_error=None):
     @contextlib.asynccontextmanager
     async def _patches(view):
         mock_token = user_token or JiraDcUserToken(
-            access_token='the_access_token', expires_at=9999999999
+            access_token=SecretStr('the_access_token'), expires_at=9999999999
         )
 
         mock_app_conversation_service = AsyncMock()
@@ -173,6 +174,49 @@ async def test_create_v1_conversation_injects_jira_dc_token(
         req.secrets['JIRA_DC_BASE_URL'].get_secret_value()
         == new_conversation_view.job_context.base_api_url
     )
+
+
+@pytest.mark.asyncio
+async def test_create_v1_conversation_skips_jira_dc_token_when_oauth_disabled(
+    new_conversation_view, mock_jinja_env
+):
+    """Legacy email-match mode must not require per-user OAuth tokens."""
+    new_conversation_view.conversation_id = 'a1b2c3d4e5f64a5b8c9d0e1f2a3b4c5d'
+    captured_requests = []
+
+    async def _fake_start(req):
+        captured_requests.append(req)
+        return
+        yield  # make it an async generator
+
+    mock_app_conversation_service = AsyncMock()
+    mock_app_conversation_service.start_app_conversation = _fake_start
+    get_token = AsyncMock()
+
+    with (
+        patch('integrations.jira_dc.jira_dc_view.JIRA_DC_ENABLE_OAUTH', False),
+        patch('integrations.jira_dc.jira_dc_view.get_user_jira_dc_token', get_token),
+        patch('integrations.jira_dc.jira_dc_view.TokenManager'),
+        patch('integrations.jira_dc.jira_dc_view.integration_store'),
+        patch(
+            'integrations.jira_dc.jira_dc_view.resolve_org_for_repo',
+            new=AsyncMock(return_value=None),
+        ),
+        patch('integrations.jira_dc.jira_dc_view.ProviderHandler'),
+        patch(
+            'integrations.jira_dc.jira_dc_view.get_app_conversation_service',
+        ) as mock_svc_ctx,
+    ):
+        mock_svc_ctx.return_value.__aenter__ = AsyncMock(
+            return_value=mock_app_conversation_service
+        )
+        mock_svc_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await new_conversation_view._create_v1_conversation(mock_jinja_env)
+
+    get_token.assert_not_called()
+    assert len(captured_requests) == 1
+    assert captured_requests[0].secrets == {}
 
 
 @pytest.mark.asyncio

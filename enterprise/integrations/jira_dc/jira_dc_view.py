@@ -22,6 +22,7 @@ from integrations.resolver_org_router import resolve_org_for_repo
 from integrations.utils import CONVERSATION_URL
 from jinja2 import Environment
 from pydantic import SecretStr
+from server.auth.constants import JIRA_DC_ENABLE_OAUTH
 from server.auth.token_manager import TokenManager
 from storage.jira_dc_conversation import JiraDcConversation
 from storage.jira_dc_integration_store import JiraDcIntegrationStore
@@ -62,7 +63,9 @@ class JiraDcNewConversationView(JiraDcViewInterface):
     async def _get_instructions(self, jinja_env: Environment) -> tuple[str, str]:
         """Instructions passed when conversation is first initialized."""
         instructions_template = jinja_env.get_template('jira_dc_instructions.j2')
-        instructions = instructions_template.render()
+        instructions = instructions_template.render(
+            jira_dc_oauth_enabled=JIRA_DC_ENABLE_OAUTH
+        )
 
         user_msg_template = jinja_env.get_template('jira_dc_new_conversation.j2')
 
@@ -126,19 +129,28 @@ class JiraDcNewConversationView(JiraDcViewInterface):
 
         injector_state = InjectorState()
 
-        # Resolve per-user OAuth token and inject into sandbox environment.
-        # JiraDcUserTokenError is intentionally not caught here — it propagates
-        # to start_job which posts a re-link comment on the Jira issue.
         sandbox_secrets: dict[str, SecretStr] = {}
-        token_manager = TokenManager()
-        user_token = await get_user_jira_dc_token(
-            keycloak_user_id=self.jira_dc_user.keycloak_user_id,
-            workspace_id=self.jira_dc_workspace.id,
-            token_manager=token_manager,
-            store=integration_store,
-        )
-        sandbox_secrets['JIRA_DC_TOKEN'] = SecretStr(user_token.access_token)
-        sandbox_secrets['JIRA_DC_BASE_URL'] = SecretStr(self.job_context.base_api_url)
+        if JIRA_DC_ENABLE_OAUTH:
+            # Resolve per-user OAuth token and inject into sandbox environment.
+            # JiraDcUserTokenError is intentionally not caught here — it propagates
+            # to start_job which posts a re-link comment on the Jira issue.
+            # TODO(jira-dc-account-token): move Jira credentials to the shared
+            # account-level integration capability path and use LookupSecret so
+            # non-Jira triggers can resolve the freshest token without copying
+            # this resolver-scoped StaticSecret pattern.
+            token_manager = TokenManager()
+            user_token = await get_user_jira_dc_token(
+                keycloak_user_id=self.jira_dc_user.keycloak_user_id,
+                workspace_id=self.jira_dc_workspace.id,
+                token_manager=token_manager,
+                store=integration_store,
+            )
+            sandbox_secrets['JIRA_DC_TOKEN'] = SecretStr(
+                user_token.access_token.get_secret_value()
+            )
+            sandbox_secrets['JIRA_DC_BASE_URL'] = SecretStr(
+                self.job_context.base_api_url
+            )
 
         # Create the V1 conversation start request
         start_request = AppConversationStartRequest(

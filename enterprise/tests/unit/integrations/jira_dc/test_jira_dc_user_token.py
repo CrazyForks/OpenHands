@@ -9,12 +9,13 @@ from integrations.jira_dc.jira_dc_user_token import (
     JiraDcUserTokenError,
     get_user_jira_dc_token,
 )
+from pydantic import SecretStr
 
 
 def _make_store(row):
     store = MagicMock()
     store.get_user_oauth_tokens = AsyncMock(return_value=row)
-    store.update_user_oauth_tokens = AsyncMock()
+    store.update_user_oauth_tokens = AsyncMock(return_value=1)
     return store
 
 
@@ -47,7 +48,8 @@ async def test_fresh_access_token_returned_without_refresh():
     )
 
     assert isinstance(result, JiraDcUserToken)
-    assert result.access_token == 'raw_access'
+    assert isinstance(result.access_token, SecretStr)
+    assert result.access_token.get_secret_value() == 'raw_access'
     assert result.expires_at == future_exp
     store.update_user_oauth_tokens.assert_not_called()
 
@@ -65,7 +67,7 @@ async def test_unknown_expiry_treated_as_fresh():
         store=store,
     )
 
-    assert result.access_token == 'raw_access'
+    assert result.access_token.get_secret_value() == 'raw_access'
     store.update_user_oauth_tokens.assert_not_called()
 
 
@@ -169,7 +171,7 @@ async def test_refresh_path_updates_store_and_returns_new_token():
             store=store,
         )
 
-    assert result.access_token == 'new_access'
+    assert result.access_token.get_secret_value() == 'new_access'
     store.update_user_oauth_tokens.assert_awaited_once()
     call_kwargs = store.update_user_oauth_tokens.call_args.kwargs
     assert call_kwargs['encrypted_access_token'] == 'enc(new_access)'
@@ -211,7 +213,7 @@ async def test_refresh_uses_existing_refresh_token_when_idp_does_not_rotate():
             store=store,
         )
 
-    assert result.access_token == 'new_access'
+    assert result.access_token.get_secret_value() == 'new_access'
     call_kwargs = store.update_user_oauth_tokens.call_args.kwargs
     # Refresh token should be the original one re-encrypted
     assert call_kwargs['encrypted_refresh_token'] == 'enc(old_refresh)'
@@ -243,6 +245,71 @@ async def test_raises_when_refresh_request_fails():
         return_value=mock_client,
     ):
         with pytest.raises(JiraDcUserTokenError, match='refresh failed'):
+            await get_user_jira_dc_token(
+                keycloak_user_id='kc1',
+                workspace_id=1,
+                token_manager=tm,
+                store=store,
+            )
+
+
+@pytest.mark.asyncio
+async def test_raises_when_refresh_response_has_no_access_token():
+    expired = int(time.time()) - 100
+    future_refresh = int(time.time()) + 86400
+    store = _make_store(('enc_access', 'enc_refresh', expired, future_refresh))
+
+    decrypt_map = {'enc_access': 'old_access', 'enc_refresh': 'old_refresh'}
+    tm = _make_token_manager(decrypt_side_effect=lambda v: decrypt_map[v])
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {'expires_in': 3600}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch(
+        'integrations.jira_dc.jira_dc_user_token.httpx.AsyncClient',
+        return_value=mock_client,
+    ):
+        with pytest.raises(JiraDcUserTokenError, match='returned no access_token'):
+            await get_user_jira_dc_token(
+                keycloak_user_id='kc1',
+                workspace_id=1,
+                token_manager=tm,
+                store=store,
+            )
+
+    store.update_user_oauth_tokens.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_raises_when_refreshed_token_update_matches_no_rows():
+    expired = int(time.time()) - 100
+    future_refresh = int(time.time()) + 86400
+    store = _make_store(('enc_access', 'enc_refresh', expired, future_refresh))
+    store.update_user_oauth_tokens.return_value = 0
+
+    decrypt_map = {'enc_access': 'old_access', 'enc_refresh': 'old_refresh'}
+    tm = _make_token_manager(decrypt_side_effect=lambda v: decrypt_map[v])
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {'access_token': 'new_access', 'expires_in': 3600}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch(
+        'integrations.jira_dc.jira_dc_user_token.httpx.AsyncClient',
+        return_value=mock_client,
+    ):
+        with pytest.raises(JiraDcUserTokenError, match='link was not found'):
             await get_user_jira_dc_token(
                 keycloak_user_id='kc1',
                 workspace_id=1,

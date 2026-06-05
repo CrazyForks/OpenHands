@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Final
 
 import httpx
+from pydantic import SecretStr
 from server.auth.constants import (
     JIRA_DC_BASE_URL,
     JIRA_DC_CLIENT_ID,
@@ -28,7 +29,7 @@ class JiraDcUserTokenError(Exception):
 
 @dataclass(frozen=True)
 class JiraDcUserToken:
-    access_token: str
+    access_token: SecretStr
     expires_at: int  # 0 if unknown
 
 
@@ -43,6 +44,10 @@ async def get_user_jira_dc_token(
 
     Raises JiraDcUserTokenError when no usable token is available.
     """
+    # TODO(jira-dc-refresh-race): single-flight refreshes with SELECT FOR UPDATE
+    # or an advisory lock before exposing this token through shared account-level
+    # integrations. Some IdPs rotate refresh tokens on use, so concurrent
+    # refreshes can otherwise write a stale refresh token back to the row.
     row = await store.get_user_oauth_tokens(
         keycloak_user_id=keycloak_user_id,
         workspace_id=workspace_id,
@@ -58,7 +63,7 @@ async def get_user_jira_dc_token(
 
     fresh = access_exp == 0 or access_exp > now + _ACCESS_REFRESH_BUFFER_SECONDS
     if fresh:
-        return JiraDcUserToken(token_manager.decrypt_text(enc_access), access_exp)
+        return JiraDcUserToken(SecretStr(token_manager.decrypt_text(enc_access)), access_exp)
 
     if not enc_refresh:
         raise JiraDcUserTokenError(
@@ -94,7 +99,12 @@ async def get_user_jira_dc_token(
             )
         data = response.json()
 
-    new_access = data['access_token']
+    new_access = data.get('access_token')
+    if not new_access:
+        raise JiraDcUserTokenError(
+            'Jira DC token refresh returned no access_token. '
+            'Please re-link via OpenHands Settings → Integrations.'
+        )
     # Some IdPs rotate the refresh token on each use; fall back to the existing one.
     new_refresh = data.get('refresh_token') or refresh_token
     new_expires_in = int(data.get('expires_in') or 0)
@@ -105,7 +115,7 @@ async def get_user_jira_dc_token(
     new_access_exp = (ts + new_expires_in) if new_expires_in else 0
     new_refresh_exp = (ts + new_refresh_expires_in) if new_refresh_expires_in else 0
 
-    await store.update_user_oauth_tokens(
+    updated_count = await store.update_user_oauth_tokens(
         keycloak_user_id=keycloak_user_id,
         workspace_id=workspace_id,
         encrypted_access_token=token_manager.encrypt_text(new_access),
@@ -113,4 +123,9 @@ async def get_user_jira_dc_token(
         access_token_expires_at=new_access_exp,
         refresh_token_expires_at=new_refresh_exp,
     )
-    return JiraDcUserToken(new_access, new_access_exp)
+    if updated_count == 0:
+        raise JiraDcUserTokenError(
+            'Stored Jira DC OAuth link was not found while refreshing tokens. '
+            'Please re-link via OpenHands Settings → Integrations.'
+        )
+    return JiraDcUserToken(SecretStr(new_access), new_access_exp)

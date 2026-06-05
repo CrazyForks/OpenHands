@@ -270,11 +270,11 @@ class JiraDcIntegrationStore:
         encrypted_refresh_token: str | None,
         access_token_expires_at: int,
         refresh_token_expires_at: int,
-    ) -> None:
+    ) -> int:
         """Persist updated OAuth tokens on the user's active workspace link."""
         async with a_session_maker() as session:
             async with session.begin():
-                await session.execute(
+                result = await session.execute(
                     update(JiraDcUser)
                     .where(
                         JiraDcUser.keycloak_user_id == keycloak_user_id,
@@ -288,6 +288,7 @@ class JiraDcIntegrationStore:
                         oauth_refresh_token_expires_at=refresh_token_expires_at,
                     )
                 )
+                return result.rowcount or 0
 
     async def get_user_oauth_tokens(
         self,

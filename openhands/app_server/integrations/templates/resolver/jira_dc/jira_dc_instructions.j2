@@ -13,6 +13,7 @@ Follow these instructions carefully:
 5.  Write clean, maintainable code that meets the requirements outlined in the issue.
 6.  Ensure that your code is well-documented and adheres to the project's coding standards.
 
+{% if jira_dc_oauth_enabled %}
 You have credentialed access to the Jira Data Center REST API as the user who triggered this conversation:
 
   - Base URL: $JIRA_DC_BASE_URL
@@ -36,3 +37,4 @@ Example — post a comment:
 When posting comments or updating description fields, the body must use Jira Wiki Markup (*bold*, _italic_, {code}...{code}, # numbered lists, * bulleted lists, [text|url]), not Markdown.
 
 Never echo or log the value of $JIRA_DC_TOKEN — treat it as a secret.
+{% endif %}

@@ -58,25 +58,18 @@ jobs:
         run: |
           # Check if any migration files or alembic.ini are modified
           CHANGES=$(git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -cE '^(enterprise/migrations/|enterprise/alembic.ini)' || echo "0")
-          echo "Number of migration file changes: $CHANGES"
           if [ "$CHANGES" -gt 0 ]; then
             echo "has_migrations=true" >> $GITHUB_OUTPUT
           else
             echo "has_migrations=false" >> $GITHUB_OUTPUT
           fi
-          echo "Debug: git diff output:"
-          git diff --name-only origin/${{ github.base_ref }}..HEAD || echo "No changes"
 
   apply-migrations:
     name: Apply migrations on test DB
     runs-on: ubuntu-24.04
-    # Run when triggered by workflow_run with success conclusion (backwards compat),
-    # OR when triggered via pull_request with migration/check script changes.
-    # Skip if no migration files are modified (checked via git diff).
-    if: |
-      ${{ github.event.workflow_run.conclusion == 'success' }} ||
-      (github.event_name == 'pull_request' && needs.check-migrations.outputs.has_migrations == 'true')
-    needs: [check-migrations]
+    needs: check-migrations
+    # Only run when check-migrations outputs has_migrations=true
+    if: needs.check-migrations.outputs.has_migrations == 'true'
     strategy:
       matrix:
         # Test both the production driver (pg8000) and the psycopg2 fallback.

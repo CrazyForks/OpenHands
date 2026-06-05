@@ -1020,6 +1020,72 @@ def test_create_user_settings_from_entities_with_org_fallback():
     assert result.search_api_key == 'search-key'
 
 
+def test_create_user_settings_from_entities_inherits_org_acp_kind():
+    """#14678: an ACP org overlaid with a member's OpenHands diff must inherit
+    the org's ACP variant, not mint a cross-variant mongrel.
+
+    Before the fix, ``{**acp_org_dump, **openhands_member_diff}`` yielded
+    ``agent_kind: 'openhands'`` with ``agent_context: None`` — the latent
+    #14674 500 (it surfaces when this UserSettings is later loaded as Settings).
+    """
+    from openhands.sdk.settings import ACPAgentSettings, validate_agent_settings
+
+    user_id = str(uuid.uuid4())
+
+    org_member = MagicMock()
+    org_member.llm_api_key = SecretStr('member-key')
+    # Member diff diverges from the org's ACP variant.
+    org_member.agent_settings_diff = {
+        'agent_kind': 'openhands',
+        'agent_context': None,
+        'agent': 'CodeActAgent',
+        'llm': {'model': 'member-model', 'base_url': 'https://member.api.com'},
+    }
+    org_member.conversation_settings_diff = {}
+
+    user = MagicMock()
+    user.accepted_tos = None
+    user.enable_sound_notifications = True
+    user.language = 'en'
+    user.user_consents_to_analytics = True
+    user.email = 'test@example.com'
+    user.email_verified = True
+    user.git_user_name = None
+    user.git_user_email = None
+
+    org = MagicMock()
+    org.remote_runtime_resource_factor = 1.0
+    org.billing_margin = 0.0
+    org.enable_proactive_conversation_starters = True
+    org.sandbox_base_container_image = None
+    org.sandbox_runtime_container_image = None
+    org.org_version = 1
+    org.agent_settings = ACPAgentSettings(acp_server='claude-code').model_dump(
+        mode='json'
+    )
+    org.conversation_settings = {}
+    org.search_api_key = None
+    org.sandbox_api_key = None
+    org.max_budget_per_task = None
+    org.v1_enabled = True
+
+    result = UserStore._create_user_settings_from_entities(
+        user_id, org_member, user, org
+    )
+
+    # Member inherits the org's ACP kind; OpenHands-only fields are dropped.
+    assert result.agent_settings['agent_kind'] == 'acp'
+    assert result.agent_settings['acp_server'] == 'claude-code'
+    assert 'agent' not in result.agent_settings
+    # The genuinely-shared llm override still rides through.
+    assert result.agent_settings['llm']['model'] == 'member-model'
+    # The merged result validates as the ACP variant without a 500 (it would
+    # raise on the OpenHands variant's non-null agent_context if it mongreled).
+    assert isinstance(
+        validate_agent_settings(result.agent_settings), ACPAgentSettings
+    )
+
+
 # --- Tests for Redis lock functions (mocked) ---
 
 

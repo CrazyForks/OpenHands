@@ -178,6 +178,14 @@ class SaasSettingsStore(SettingsStore):
         org_agent_settings_dump = org_agent_settings.model_dump(mode='json')
         for private_key in MEMBER_PRIVATE_AGENT_KEYS:
             org_agent_settings_dump.pop(private_key, None)
+        # The agent variant is an org-level choice; a member inherits it. Strip
+        # a divergent ``agent_kind`` (and its variant-specific fields) from the
+        # member diff before merging so the overlay can't mix variants into an
+        # invalid mongrel (#14678 / the #14674 500 reached via this door).
+        member_agent_settings_diff = OrgStore.constrain_member_diff_to_org_kind(
+            org_agent_settings,
+            member_agent_settings_diff,
+        )
         merged_agent_settings = deep_merge(
             org_agent_settings_dump,
             member_agent_settings_diff,
@@ -369,17 +377,25 @@ class SaasSettingsStore(SettingsStore):
             # Strip any pre-existing private keys from the org dump before
             # merging, so legacy values written by older code paths are
             # cleaned up on the next save and stop leaking to other members.
-            org_agent_settings_dump = OrgStore.get_agent_settings_from_org(
-                org
-            ).model_dump(mode='json')
+            org_agent_settings = OrgStore.get_agent_settings_from_org(org)
+            org_agent_settings_dump = org_agent_settings.model_dump(mode='json')
             for private_key in MEMBER_PRIVATE_AGENT_KEYS:
                 org_agent_settings_dump.pop(private_key, None)
 
-            # Single assignment so SQLAlchemy tracks the change
-            org.agent_settings = deep_merge_with_wholesale_keys(
-                org_agent_settings_dump,
-                shared_agent_settings_diff,
-            )
+            # Single assignment so SQLAlchemy tracks the change.
+            # ``shared_agent_settings_diff`` is a complete variant dump (``item``
+            # is fully validated), so on a variant switch, deep-merging it onto
+            # the outgoing variant strands the old keys in ``org.agent_settings``
+            # (a persisted cross-variant mongrel — #14678). Write the new variant
+            # fresh on a kind change; same-variant keeps the merge for its
+            # wholesale-key (mcp_config) semantics.
+            if item.agent_settings.agent_kind != org_agent_settings.agent_kind:
+                org.agent_settings = shared_agent_settings_diff
+            else:
+                org.agent_settings = deep_merge_with_wholesale_keys(
+                    org_agent_settings_dump,
+                    shared_agent_settings_diff,
+                )
 
             effective_conversation_diff = item.conversation_settings.model_dump(
                 mode='json'

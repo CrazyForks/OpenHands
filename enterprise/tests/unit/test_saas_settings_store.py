@@ -1158,3 +1158,183 @@ async def test_store_replaces_mcp_config_on_delete(
     )
     assert set(admin_servers.keys()) == {'server1', 'server2'}
     assert 'mcp_config' not in members[member1_user_id].agent_settings_diff
+
+
+@pytest.fixture
+def acp_org_with_divergent_member_fixture(session_maker):
+    """An org on the ACP variant whose member's stored diff diverges to the
+    OpenHands kind — the latent #14678 overlay state."""
+    from storage.org import Org
+    from storage.org_member import OrgMember
+    from storage.role import Role
+    from storage.user import User
+
+    from openhands.sdk.settings import ACPAgentSettings
+
+    org_id = uuid.UUID('6694c7b6-f959-4b81-92e9-b09c206f5081')
+    member_user_id = uuid.UUID('6694c7b6-f959-4b81-92e9-b09c206f5082')
+
+    with session_maker() as session:
+        session.add(Role(id=20, name='member', rank=3))
+        session.add(
+            Org(
+                id=org_id,
+                name='acp-org',
+                org_version=1,
+                enable_proactive_conversation_starters=True,
+                # Org is on the ACP variant (agent_context is null for ACP).
+                agent_settings=ACPAgentSettings(acp_server='claude-code').model_dump(
+                    mode='json'
+                ),
+                conversation_settings={},
+                # Non-empty so load() does not take the seed-default profile
+                # write path.
+                llm_profiles={
+                    'profiles': {'Default': {'model': 'anthropic/claude-sonnet-4'}},
+                    'active': 'Default',
+                },
+            )
+        )
+        session.add(
+            User(
+                id=member_user_id,
+                current_org_id=org_id,
+                user_consents_to_analytics=True,
+                enable_sound_notifications=False,
+            )
+        )
+        session.add(
+            OrgMember(
+                org_id=org_id,
+                user_id=member_user_id,
+                role_id=20,
+                llm_api_key='member-key',
+                has_custom_llm_api_key=True,
+                # Diff diverges from the org's ACP kind; no agent_context, so the
+                # deep_merge keeps the org's null one -> the #14674 500 shape.
+                agent_settings_diff={
+                    'agent_kind': 'openhands',
+                    'agent': 'CodeActAgent',
+                    'llm': {'model': 'member-model', 'base_url': 'http://member.url'},
+                },
+                conversation_settings_diff={},
+                status='active',
+            )
+        )
+        session.commit()
+
+    return {'org_id': org_id, 'member_user_id': member_user_id}
+
+
+@pytest.mark.asyncio
+async def test_load_inherits_org_acp_kind_for_divergent_openhands_member_diff(
+    async_session_maker, acp_org_with_divergent_member_fixture
+):
+    """#14678: SaasSettingsStore.load() overlaying an OpenHands member diff onto
+    an ACP org must inherit the org's ACP kind instead of 500'ing (the #14674
+    failure reached through the overlay door)."""
+    from storage.saas_settings_store import SaasSettingsStore
+
+    fixture = acp_org_with_divergent_member_fixture
+    store = SaasSettingsStore(str(fixture['member_user_id']))
+
+    with (
+        patch('storage.saas_settings_store.a_session_maker', async_session_maker),
+        patch('storage.user_store.a_session_maker', async_session_maker),
+        patch('storage.org_store.a_session_maker', async_session_maker),
+    ):
+        settings = await store.load()
+
+    assert settings is not None
+    # Member inherits the org's ACP variant; no cross-variant mongrel.
+    assert settings.agent_settings.agent_kind == 'acp'
+    assert settings.agent_settings.acp_server == 'claude-code'
+    # The genuinely-shared llm override still rides through the overlay.
+    assert settings.agent_settings.llm.model == 'member-model'
+
+
+@pytest.mark.asyncio
+async def test_store_variant_switch_persists_clean_org_settings(
+    session_maker, async_session_maker
+):
+    """#14678: when a member's save switches the org's variant, org.agent_settings
+    is rewritten as the new variant's clean dump rather than a deep-merge that
+    strands the outgoing variant's keys (a persisted cross-variant mongrel)."""
+    from sqlalchemy import select
+    from storage.org import Org
+    from storage.org_member import OrgMember
+    from storage.role import Role
+    from storage.saas_settings_store import SaasSettingsStore
+    from storage.user import User
+
+    from openhands.sdk.settings import ACPAgentSettings
+
+    org_id = uuid.UUID('7794c7b6-f959-4b81-92e9-b09c206f5081')
+    member_user_id = uuid.UUID('7794c7b6-f959-4b81-92e9-b09c206f5082')
+
+    with session_maker() as session:
+        session.add(Role(id=30, name='member', rank=3))
+        session.add(
+            Org(
+                id=org_id,
+                name='acp-org-2',
+                org_version=1,
+                enable_proactive_conversation_starters=True,
+                agent_settings=ACPAgentSettings(
+                    acp_server='claude-code', acp_command=['npx', 'foo']
+                ).model_dump(mode='json'),
+                conversation_settings={},
+            )
+        )
+        session.add(
+            User(
+                id=member_user_id,
+                current_org_id=org_id,
+                user_consents_to_analytics=True,
+            )
+        )
+        session.add(
+            OrgMember(
+                org_id=org_id,
+                user_id=member_user_id,
+                role_id=30,
+                llm_api_key='member-key',
+                has_custom_llm_api_key=True,
+                agent_settings_diff={'agent_kind': 'acp', 'acp_server': 'claude-code'},
+                conversation_settings_diff={},
+                status='active',
+            )
+        )
+        session.commit()
+
+    # Member saves an OpenHands (BYOR, non-managed) settings -> variant switch.
+    store = SaasSettingsStore(str(member_user_id))
+    new_settings = _make_settings(
+        model='anthropic/claude-sonnet-4',
+        base_url='https://api.anthropic.com/v1',
+        api_key='member-byor-key',
+    )
+
+    with patch('storage.saas_settings_store.a_session_maker', async_session_maker):
+        await store.store(new_settings)
+
+    with session_maker() as session:
+        org = session.execute(select(Org).where(Org.id == org_id)).scalars().first()
+        member = (
+            session.execute(
+                select(OrgMember).where(OrgMember.user_id == member_user_id)
+            )
+            .scalars()
+            .first()
+        )
+
+    # org.agent_settings is a clean OpenHands variant: no stranded ACP keys.
+    assert org.agent_settings['agent_kind'] == 'openhands'
+    assert 'acp_server' not in org.agent_settings
+    assert 'acp_command' not in org.agent_settings
+    # And it round-trips through the loader as the OpenHands variant.
+    from storage.org_store import OrgStore
+
+    assert OrgStore.get_agent_settings_from_org(org).agent_kind == 'openhands'
+    # The broadcast leaves the acting member's stored diff openhands too.
+    assert member.agent_settings_diff['agent_kind'] == 'openhands'

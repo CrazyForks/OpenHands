@@ -1031,6 +1031,14 @@ class UserStore:
 
         member_agent_settings_diff = dict(org_member.agent_settings_diff)
         org_agent_settings = OrgStore.get_agent_settings_from_org(org)
+        # The agent variant is an org-level choice; a member inherits it. Strip
+        # a divergent ``agent_kind`` (and its variant-specific fields) from the
+        # member diff before overlaying so a member whose diff diverges from the
+        # org's kind can't mint a cross-variant mongrel here (#14678).
+        member_agent_settings_diff = OrgStore.constrain_member_diff_to_org_kind(
+            org_agent_settings,
+            member_agent_settings_diff,
+        )
         agent_settings = {
             **org_agent_settings.model_dump(mode='json'),
             **member_agent_settings_diff,

@@ -198,6 +198,61 @@ def test_merge_and_validate_settings_switches_variant_without_mongrel():
     assert merged.acp_server == 'claude-code'
 
 
+def test_constrain_member_diff_drops_divergent_openhands_diff_on_acp_org():
+    """#14678: an ACP org overlaid with an OpenHands member diff must not mix
+    variants. The discriminator and OpenHands-only fields are dropped (the
+    member inherits the org's ACP kind); only cross-variant fields survive.
+
+    Without this, deep-merging ``{'agent_kind': 'openhands'}`` onto an ACP org
+    dump (``agent_context: None``) validates as ``OpenHandsAgentSettings`` with
+    ``agent_context=None`` — the #14674 500, reached via the overlay door.
+    """
+    org_acp = ACPAgentSettings(acp_server='claude-code')
+    member_diff = {
+        'agent_kind': 'openhands',
+        'agent_context': None,
+        'agent': 'CodeActAgent',
+        'llm': {'model': 'gpt-4o'},
+        'mcp_config': {'mcpServers': {'s': {'url': 'http://m', 'transport': 'sse'}}},
+    }
+
+    constrained = OrgStore.constrain_member_diff_to_org_kind(org_acp, member_diff)
+
+    assert constrained == {
+        'llm': {'model': 'gpt-4o'},
+        'mcp_config': {'mcpServers': {'s': {'url': 'http://m', 'transport': 'sse'}}},
+    }
+
+
+def test_constrain_member_diff_drops_divergent_acp_diff_on_openhands_org():
+    """Reverse direction: an OpenHands org overlaid with an ACP member diff
+    drops ``agent_kind`` and the ACP-only fields, so the OpenHands variant
+    survives intact (the silent-drop path in #14678)."""
+    org_oh = OpenHandsAgentSettings()
+    member_diff = {
+        'agent_kind': 'acp',
+        'acp_server': 'codex',
+        'acp_command': ['npx', 'foo'],
+        'llm': {'model': 'sonnet'},
+    }
+
+    constrained = OrgStore.constrain_member_diff_to_org_kind(org_oh, member_diff)
+
+    assert constrained == {'llm': {'model': 'sonnet'}}
+
+
+def test_constrain_member_diff_passes_matching_kind_through_unchanged():
+    """A member diff that matches (or omits) the org's kind is returned as-is,
+    so same-variant overrides (incl. variant-specific fields) still apply."""
+    org_acp = ACPAgentSettings(acp_server='claude-code')
+
+    matching = {'agent_kind': 'acp', 'acp_server': 'codex', 'llm': {'model': 'x'}}
+    assert OrgStore.constrain_member_diff_to_org_kind(org_acp, matching) is matching
+
+    no_kind = {'llm': {'model': 'y'}}
+    assert OrgStore.constrain_member_diff_to_org_kind(org_acp, no_kind) is no_kind
+
+
 @pytest.mark.asyncio
 async def test_update_org_not_found(async_session_maker):
     # Test updating org that doesn't exist

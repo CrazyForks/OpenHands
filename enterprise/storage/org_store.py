@@ -56,6 +56,14 @@ _ORG_SETTINGS_FIELDS = {
     if (normalized := column.name.lstrip('_')) not in _ORG_SETTINGS_EXCLUDED_FIELDS
 }
 
+# Member-diff keys safe to overlay onto a *different* org variant (see
+# ``constrain_member_diff_to_org_kind``). ``llm`` and ``mcp_config`` are the
+# only fields shared by both variants with a compatible shape. ``agent_context``
+# is excluded on purpose: it is non-null on OpenHands but nullable on ACP, so
+# carrying it across variants reproduces the #14674 500. Fail-closed allowlist:
+# a future shared-but-type-divergent field is dropped, not forwarded.
+_CROSS_VARIANT_OVERLAY_KEYS: frozenset[str] = frozenset({'llm', 'mcp_config'})
+
 
 class OrgStore:
     """Store for managing organizations."""
@@ -68,6 +76,37 @@ class OrgStore:
         # ``ACPAgentSettings``, not coerced into the OpenHands shape — that
         # coercion 500s on ACP's nullable ``agent_context``.
         return _load_persisted_agent_settings(dict(org.agent_settings))
+
+    @staticmethod
+    def constrain_member_diff_to_org_kind(
+        org_agent_settings: AgentSettingsConfig,
+        member_agent_settings_diff: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Constrain a member's agent-settings diff to the org's variant.
+
+        The agent variant (``agent_kind``) is an org-level choice; in the
+        org⊕member overlay a member inherits it rather than owning it. A member
+        diff whose kind diverges from the org's would otherwise mix variants
+        into an invalid mongrel — e.g. ACP org (``agent_context: None``) +
+        ``agent_kind: 'openhands'`` validates as ``OpenHandsAgentSettings`` with
+        ``agent_context=None`` → the #14674 500 (#14678). So a divergent diff is
+        reduced to the cross-variant-safe fields
+        (:data:`_CROSS_VARIANT_OVERLAY_KEYS`); a matching/absent kind passes
+        through unchanged.
+
+        Deliberately *not* the "replace on kind change" rule of the self-edit
+        path (:meth:`_merge_and_validate_settings`, ``Settings.update``): there
+        the user owns the switch; here a sparse diff must not replace the org's
+        variant.
+        """
+        member_kind = member_agent_settings_diff.get('agent_kind')
+        if member_kind is None or member_kind == org_agent_settings.agent_kind:
+            return member_agent_settings_diff
+        return {
+            key: value
+            for key, value in member_agent_settings_diff.items()
+            if key in _CROSS_VARIANT_OVERLAY_KEYS
+        }
 
     @staticmethod
     def get_conversation_settings_from_org(org: Org) -> ConversationSettings:

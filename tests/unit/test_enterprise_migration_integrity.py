@@ -151,6 +151,39 @@ def test_missing_down_revision_fails(versions_dir: Path):
     assert any('references missing down_revision 999' in error for error in errors)
 
 
+def test_missing_down_revision_assignment_fails(versions_dir: Path):
+    """Test when down_revision is completely absent from the file."""
+    module = load_module()
+    (versions_dir / '001_create_users.py').write_text(
+        '\n'.join(
+            [
+                '"""Test migration."""',
+                '',
+                "revision = '001'",
+                'branch_labels = None',
+                'depends_on = None',
+                '',
+                'def upgrade():',
+                '    pass',
+                '',
+                'def downgrade():',
+                '    pass',
+                '',
+            ]
+        )
+    )
+    write_migration(
+        versions_dir,
+        '002_add_user_email.py',
+        revision='002',
+        down_revision='001',
+    )
+
+    errors = module.check_migration_integrity(versions_dir)
+
+    assert any('missing down_revision assignment' in error for error in errors)
+
+
 def test_multiple_heads_fail(versions_dir: Path):
     module = load_module()
     write_migration(

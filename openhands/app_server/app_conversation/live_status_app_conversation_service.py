@@ -83,6 +83,9 @@ from openhands.app_server.sandbox.sandbox_models import (
 )
 from openhands.app_server.sandbox.sandbox_service import SandboxService
 from openhands.app_server.sandbox.sandbox_spec_service import SandboxSpecService
+from openhands.app_server.sandbox.warm_runtime_configs import (
+    get_warm_runtime_configs,
+)
 from openhands.app_server.services.injector import InjectorState
 from openhands.app_server.services.jwt_service import JwtService
 from openhands.app_server.settings.llm_profiles import resolve_profile_llm
@@ -348,6 +351,34 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
         """Get the sandbox grouping strategy from user settings."""
         user_info = await self.user_context.get_user_info()
         return user_info.sandbox_grouping_strategy
+
+    async def _get_runtime_v2_selection(self) -> tuple[bool, str | None]:
+        """Resolve whether to start this user's sandbox via Runtime API V2.
+
+        Mirrors ``_get_sandbox_grouping_strategy``: reads the per-user product
+        setting (``UserInfo`` subclasses ``Settings``) to influence sandbox
+        startup. Returns ``(use_v2, sandbox_template)``.
+
+        Falls back to V1 (``(False, None)``) when the user hasn't opted in,
+        hasn't chosen a warm pool, or chose one that's no longer in the
+        configured ``SANDBOX_WARM_RUNTIME_CONFIGS`` map (a stale selection after
+        the operator changed the offering). Falling back rather than failing
+        keeps a stale setting from 400-ing every conversation start.
+        """
+        user_info = await self.user_context.get_user_info()
+        if not user_info.use_runtime_v2 or not user_info.warm_runtime_config:
+            return False, None
+        configured = get_warm_runtime_configs()
+        if user_info.warm_runtime_config not in configured:
+            _logger.warning(
+                'User %s opted into Runtime V2 with warm_runtime_config=%r, which '
+                'is not in %s; falling back to V1',
+                user_info.id,
+                user_info.warm_runtime_config,
+                'SANDBOX_WARM_RUNTIME_CONFIGS',
+            )
+            return False, None
+        return True, user_info.warm_runtime_config
 
     async def search_app_conversations(
         self,
@@ -915,8 +946,11 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
                     else None
                 )
 
+                use_v2, sandbox_template = await self._get_runtime_v2_selection()
                 sandbox = await self.sandbox_service.start_sandbox(
-                    sandbox_id=sandbox_id_str
+                    sandbox_id=sandbox_id_str,
+                    runtime_api_version='v2' if use_v2 else 'v1',
+                    sandbox_template=sandbox_template,
                 )
             task.sandbox_id = sandbox.id
         else:

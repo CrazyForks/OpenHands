@@ -146,6 +146,13 @@ class Settings(BaseModel):
     sandbox_grouping_strategy: SandboxGroupingStrategy = (
         SandboxGroupingStrategy.NO_GROUPING
     )
+    # Opt-in (SaaS only) to route this user's sandboxes through Runtime API V2.
+    # ``warm_runtime_config`` is the chosen ``SandboxWarmPool`` / V2
+    # ``sandbox_template`` name; it only takes effect when ``use_runtime_v2`` is
+    # True and a V2 runtime URL is configured. Both default off so OSS and
+    # non-opted-in users are unaffected.
+    use_runtime_v2: bool = False
+    warm_runtime_config: str | None = None
     llm_profiles: LLMProfiles = Field(
         default_factory=LLMProfiles,
         description=(

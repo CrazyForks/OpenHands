@@ -358,9 +358,18 @@ class DockerSandboxService(SandboxService):
             return None
 
     async def start_sandbox(
-        self, sandbox_spec_id: str | None = None, sandbox_id: str | None = None
+        self,
+        sandbox_spec_id: str | None = None,
+        sandbox_id: str | None = None,
+        *,
+        runtime_api_version: str = 'v1',
+        sandbox_template: str | None = None,
     ) -> SandboxInfo:
-        """Start a new sandbox."""
+        """Start a new sandbox.
+
+        ``runtime_api_version`` / ``sandbox_template`` are accepted for interface
+        compatibility with the remote (V2-capable) service and ignored here.
+        """
         # Warn about port collision risk when using host network mode with multiple sandboxes
         if self.use_host_network and self.max_num_sandboxes > 1:
             _logger.warning(

@@ -197,6 +197,56 @@ class TestLiveStatusAppConversationService:
         # Tests that specifically test hooks loading can override this mock
         self.service._load_hooks_from_workspace = AsyncMock(return_value=None)
 
+    _SELECTION_PATCH = (
+        'openhands.app_server.app_conversation.'
+        'live_status_app_conversation_service.get_warm_runtime_configs'
+    )
+
+    @pytest.mark.asyncio
+    async def test_runtime_v2_selection_opted_in(self):
+        """Opted-in user with a configured pool selects V2 + the template."""
+        self.mock_user_context.get_user_info = AsyncMock(
+            return_value=SimpleNamespace(
+                id='u1', use_runtime_v2=True, warm_runtime_config='python-gvisor'
+            )
+        )
+        with patch(
+            self._SELECTION_PATCH,
+            return_value={'python-gvisor': 'Python (gVisor)'},
+        ):
+            use_v2, template = await self.service._get_runtime_v2_selection()
+        assert use_v2 is True
+        assert template == 'python-gvisor'
+
+    @pytest.mark.asyncio
+    async def test_runtime_v2_selection_opted_out(self):
+        """use_runtime_v2 off -> V1 regardless of a stored warm_runtime_config."""
+        self.mock_user_context.get_user_info = AsyncMock(
+            return_value=SimpleNamespace(
+                id='u1', use_runtime_v2=False, warm_runtime_config='python-gvisor'
+            )
+        )
+        use_v2, template = await self.service._get_runtime_v2_selection()
+        assert use_v2 is False
+        assert template is None
+
+    @pytest.mark.asyncio
+    async def test_runtime_v2_selection_stale_pool_falls_back_to_v1(self):
+        """A selection no longer in the configured map falls back to V1 (safe
+        default) rather than 400-ing every conversation start."""
+        self.mock_user_context.get_user_info = AsyncMock(
+            return_value=SimpleNamespace(
+                id='u1', use_runtime_v2=True, warm_runtime_config='removed-pool'
+            )
+        )
+        with patch(
+            self._SELECTION_PATCH,
+            return_value={'python-gvisor': 'Python (gVisor)'},
+        ):
+            use_v2, template = await self.service._get_runtime_v2_selection()
+        assert use_v2 is False
+        assert template is None
+
     @pytest.mark.asyncio
     async def test_seed_sandbox_profiles_upserts_resolved_keys_and_prunes(self):
         """Pushes each profile to the sandbox with its key resolved (managed key

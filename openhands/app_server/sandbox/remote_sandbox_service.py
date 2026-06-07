@@ -96,6 +96,10 @@ class StoredRemoteSandbox(Base):
     session_api_key_hash: Mapped[str | None] = mapped_column(
         String, nullable=True, index=True
     )
+    # The Runtime API V2 warm-pool / sandbox_template name this sandbox was
+    # started with. NULL for V1 sandboxes; a non-null value is the discriminator
+    # that routes this sandbox's whole lifecycle (get/pause/resume/stop) to V2.
+    sandbox_template: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, server_default=func.now(), index=True
     )
@@ -120,15 +124,35 @@ class RemoteSandboxService(SandboxService):
     user_context: UserContext
     httpx_client: httpx.AsyncClient
     db_session: AsyncSession
+    # Optional separate Runtime API V2 endpoint. Each falls back to the V1 value
+    # when unset, so a same-URL V2 rollout needs no extra configuration.
+    api_url_v2: str | None = None
+    api_key_v2: str | None = None
+
+    def _endpoint(self, is_v2: bool) -> tuple[str, str]:
+        """Resolve the ``(base_url, api_key)`` for the requested API version.
+
+        V2 falls back to the V1 url/key when a separate V2 value isn't
+        configured.
+        """
+        if is_v2:
+            return (self.api_url_v2 or self.api_url, self.api_key_v2 or self.api_key)
+        return (self.api_url, self.api_key)
+
+    @staticmethod
+    def _is_v2(stored: StoredRemoteSandbox) -> bool:
+        """A sandbox is V2 iff it was started with a ``sandbox_template``."""
+        return stored.sandbox_template is not None
 
     async def _send_runtime_api_request(
-        self, method: str, path: str, **kwargs: Any
+        self, method: str, path: str, *, is_v2: bool = False, **kwargs: Any
     ) -> httpx.Response:
-        """Send a request to the remote runtime API."""
+        """Send a request to the remote runtime API (V1 by default, V2 when set)."""
+        api_url, api_key = self._endpoint(is_v2)
         try:
-            url = self.api_url + path
+            url = api_url + path
             return await self.httpx_client.request(
-                method, url, headers={'X-API-Key': self.api_key}, **kwargs
+                method, url, headers={'X-API-Key': api_key}, **kwargs
             )
         except httpx.TimeoutException:
             _logger.error(f'No response received within timeout for URL: {url}')
@@ -225,46 +249,54 @@ class RemoteSandboxService(SandboxService):
         stored_sandbox = result.scalar_one_or_none()
         return stored_sandbox
 
-    async def _get_runtime(self, sandbox_id: str) -> dict[str, Any]:
+    async def _get_runtime(
+        self, sandbox_id: str, is_v2: bool = False
+    ) -> dict[str, Any]:
         response = await self._send_runtime_api_request(
             'GET',
             f'/sessions/{sandbox_id}',
+            is_v2=is_v2,
         )
         response.raise_for_status()
         runtime_data = response.json()
         return runtime_data
 
     async def _get_runtimes_batch(
-        self, sandbox_ids: list[str]
+        self, stored_sandboxes: list[StoredRemoteSandbox]
     ) -> dict[str, dict[str, Any]]:
-        """Get multiple runtimes in a single batch request.
+        """Get multiple runtimes via the batch endpoint(s).
+
+        Mixed fleets are supported: V1 and V2 sandboxes are queried against their
+        respective endpoints and the results are merged. Splitting by version is
+        required because a V2 sandbox is invisible to the V1 endpoint (and vice
+        versa).
 
         Args:
-            sandbox_ids: List of sandbox IDs to fetch
+            stored_sandboxes: Stored sandbox rows to fetch runtime data for
 
         Returns:
             Dictionary mapping sandbox_id to runtime data
         """
-        if not sandbox_ids:
-            return {}
+        runtimes_by_id: dict[str, dict[str, Any]] = {}
+        v1_ids = [s.id for s in stored_sandboxes if not self._is_v2(s)]
+        v2_ids = [s.id for s in stored_sandboxes if self._is_v2(s)]
 
-        # Build query parameters for the batch endpoint
-        params = [('ids', sandbox_id) for sandbox_id in sandbox_ids]
-
-        response = await self._send_runtime_api_request(
-            'GET',
-            '/sessions/batch',
-            params=params,
-        )
-        response.raise_for_status()
-        batch_data = response.json()
-
-        # The batch endpoint should return a list of runtimes
-        # Convert to a dictionary keyed by session_id for easy lookup
-        runtimes_by_id = {}
-        for runtime in batch_data:
-            if runtime and 'session_id' in runtime:
-                runtimes_by_id[runtime['session_id']] = runtime
+        for ids, is_v2 in ((v1_ids, False), (v2_ids, True)):
+            if not ids:
+                continue
+            # Build query parameters for the batch endpoint
+            params = [('ids', sandbox_id) for sandbox_id in ids]
+            response = await self._send_runtime_api_request(
+                'GET',
+                '/sessions/batch',
+                is_v2=is_v2,
+                params=params,
+            )
+            response.raise_for_status()
+            # The batch endpoint returns a list of runtimes; key by session_id.
+            for runtime in response.json():
+                if runtime and 'session_id' in runtime:
+                    runtimes_by_id[runtime['session_id']] = runtime
 
         return runtimes_by_id
 
@@ -324,9 +356,8 @@ class RemoteSandboxService(SandboxService):
         if has_more:
             next_page_id = str(offset + limit)
 
-        # Batch fetch runtime data for all sandboxes
-        sandbox_ids = [stored_sandbox.id for stored_sandbox in stored_sandboxes]
-        runtimes_by_id = await self._get_runtimes_batch(sandbox_ids)
+        # Batch fetch runtime data for all sandboxes (version-aware)
+        runtimes_by_id = await self._get_runtimes_batch(list(stored_sandboxes))
 
         # Convert stored sandboxes to domain models with runtime data
         items = [
@@ -344,11 +375,25 @@ class RemoteSandboxService(SandboxService):
 
         runtime = None
         try:
-            runtime = await self._get_runtime(stored_sandbox.id)
+            runtime = await self._get_runtime(
+                stored_sandbox.id, is_v2=self._is_v2(stored_sandbox)
+            )
         except Exception:
             _logger.exception(
                 f'Error getting runtime: {stored_sandbox.id}', stack_info=True
             )
+
+        # Lazily persist the session API key hash once it appears. In V2 the key
+        # is null at /start and only arrives via this status poll once the
+        # sandbox is Ready; backfilling here keeps reverse lookups (by
+        # session_api_key) working for V2 exactly as they do for V1. Harmless for
+        # V1, where the hash is already set at start.
+        if runtime and stored_sandbox.session_api_key_hash is None:
+            session_api_key = runtime.get('session_api_key')
+            if session_api_key:
+                stored_sandbox.session_api_key_hash = _hash_session_api_key(
+                    session_api_key
+                )
 
         return self._to_sandbox_info(stored_sandbox, runtime)
 
@@ -395,7 +440,9 @@ class RemoteSandboxService(SandboxService):
         # Check each sandbox's runtime data for matching session_api_key
         for stored_sandbox in stored_sandboxes:
             try:
-                runtime = await self._get_runtime(stored_sandbox.id)
+                runtime = await self._get_runtime(
+                    stored_sandbox.id, is_v2=self._is_v2(stored_sandbox)
+                )
                 if runtime and runtime.get('session_api_key') == session_api_key:
                     # Backfill the hash for future lookups (Auto committed at end of request)
                     stored_sandbox.session_api_key_hash = _hash_session_api_key(
@@ -429,7 +476,9 @@ class RemoteSandboxService(SandboxService):
 
         if stored_sandbox:
             try:
-                runtime = await self._get_runtime(stored_sandbox.id)
+                runtime = await self._get_runtime(
+                    stored_sandbox.id, is_v2=self._is_v2(stored_sandbox)
+                )
                 return self._to_sandbox_info(stored_sandbox, runtime)
             except Exception:
                 _logger.exception(
@@ -442,9 +491,29 @@ class RemoteSandboxService(SandboxService):
         return await self._get_sandbox_by_session_api_key_legacy(session_api_key)
 
     async def start_sandbox(
-        self, sandbox_spec_id: str | None = None, sandbox_id: str | None = None
+        self,
+        sandbox_spec_id: str | None = None,
+        sandbox_id: str | None = None,
+        *,
+        runtime_api_version: str = 'v1',
+        sandbox_template: str | None = None,
     ) -> SandboxInfo:
-        """Start a new sandbox by creating a remote runtime."""
+        """Start a new sandbox by creating a remote runtime.
+
+        When ``runtime_api_version == 'v2'`` (and a ``sandbox_template`` is
+        provided), the sandbox is started against the configured V2 endpoint by
+        naming a warm-pool template; the workload (image/command/resources/env)
+        is template-defined server-side, so the V1 spec body is not sent. V2's
+        ``/start`` returns ``session_api_key=null`` — it is read later from the
+        status poll (see ``get_sandbox``).
+        """
+        # Defensive: V2 without a template would 400 at the V2 endpoint. The
+        # caller already guards this, but fall back to V1 rather than fail.
+        is_v2 = runtime_api_version == 'v2' and bool(sandbox_template)
+        if runtime_api_version == 'v2' and not sandbox_template:
+            _logger.warning(
+                'Runtime V2 requested without a sandbox_template; falling back to V1'
+            )
         try:
             # Enforce sandbox limits by cleaning up old sandboxes
             await self.pause_old_sandboxes(self.max_num_sandboxes - 1)
@@ -469,45 +538,58 @@ class RemoteSandboxService(SandboxService):
             # get user id
             user_id = await self.user_context.get_user_id()
 
-            # Store the sandbox
+            # Store the sandbox. A non-null sandbox_template marks this row as V2,
+            # so the rest of its lifecycle routes to the V2 endpoint.
             stored_sandbox = StoredRemoteSandbox(
                 id=sandbox_id,
                 created_by_user_id=user_id,
                 sandbox_spec_id=sandbox_spec.id,
+                sandbox_template=sandbox_template if is_v2 else None,
                 created_at=utc_now(),
             )
             self.db_session.add(stored_sandbox)
 
-            # Prepare environment variables
-            environment = await self._init_environment(sandbox_spec, sandbox_id)
+            if is_v2:
+                # V2: the warm-pool template defines the workload server-side, so
+                # we only name the template (and the session).
+                start_request: dict[str, Any] = {
+                    'sandbox_template': sandbox_template,
+                    'session_id': sandbox_id,
+                }
+            else:
+                # Prepare environment variables
+                environment = await self._init_environment(sandbox_spec, sandbox_id)
 
-            # Prepare start request
-            start_request: dict[str, Any] = {
-                'image': sandbox_spec.id,  # Use sandbox_spec.id as the container image
-                'command': sandbox_spec.command,
-                'working_dir': '/workspace',
-                'environment': environment,
-                'session_id': sandbox_id,  # Use sandbox_id as session_id
-                'resource_factor': self.resource_factor,
-                'run_as_user': 10001,
-                'run_as_group': 10001,
-                'fs_group': 10001,
-            }
+                # Prepare start request
+                start_request = {
+                    'image': sandbox_spec.id,  # Use sandbox_spec.id as the container image
+                    'command': sandbox_spec.command,
+                    'working_dir': '/workspace',
+                    'environment': environment,
+                    'session_id': sandbox_id,  # Use sandbox_id as session_id
+                    'resource_factor': self.resource_factor,
+                    'run_as_user': 10001,
+                    'run_as_group': 10001,
+                    'fs_group': 10001,
+                }
 
-            # Add runtime class if specified
-            if self.runtime_class == 'sysbox':
-                start_request['runtime_class'] = 'sysbox-runc'
+                # Add runtime class if specified
+                if self.runtime_class == 'sysbox':
+                    start_request['runtime_class'] = 'sysbox-runc'
 
             # Start the runtime
             response = await self._send_runtime_api_request(
                 'POST',
                 '/start',
+                is_v2=is_v2,
                 json=start_request,
             )
             response.raise_for_status()
             runtime_data = response.json()
 
-            # Store the session_api_key hash for efficient lookups
+            # Store the session_api_key hash for efficient lookups. In V2 the key
+            # is null here (it arrives via the status poll once Ready) and
+            # get_sandbox backfills the hash then.
             session_api_key = runtime_data.get('session_api_key')
             if session_api_key:
                 stored_sandbox.session_api_key_hash = _hash_session_api_key(
@@ -527,9 +609,14 @@ class RemoteSandboxService(SandboxService):
     async def resume_sandbox(self, sandbox_id: str) -> bool:
         """Resume a paused sandbox.
 
-        Security: When a sandbox is resumed, the runtime-api generates a new
-        session_api_key and returns it. This invalidates any previously leaked
-        keys and ensures that only the new key can be used to access secrets.
+        Security: In V1, resuming rotates the session_api_key; the runtime-api
+        returns the new key, invalidating any previously leaked one. In V2 the
+        key is PVC-persisted and stable across pause/resume, so the returned key
+        is unchanged and the update below is a harmless no-op.
+
+        Note: V2's /resume is asynchronous (the pod is recreated); callers must
+        poll wait_for_sandbox_running before connecting, which start/resume
+        callers already do.
         """
         # Enforce sandbox limits by cleaning up old sandboxes
         await self.pause_old_sandboxes(self.max_num_sandboxes - 1)
@@ -538,18 +625,21 @@ class RemoteSandboxService(SandboxService):
             stored_sandbox = await self._get_stored_sandbox(sandbox_id)
             if not stored_sandbox:
                 return False
-            runtime_data = await self._get_runtime(sandbox_id)
+            is_v2 = self._is_v2(stored_sandbox)
+            runtime_data = await self._get_runtime(sandbox_id, is_v2=is_v2)
             response = await self._send_runtime_api_request(
                 'POST',
                 '/resume',
+                is_v2=is_v2,
                 json={'runtime_id': runtime_data['runtime_id']},
             )
             if response.status_code == 404:
                 return False
             response.raise_for_status()
 
-            # Security: Update stored session_api_key with the new key returned
-            # by the runtime-api. The old key was invalidated on resume.
+            # Security: Update stored session_api_key with the key returned by
+            # the runtime-api. In V1 the old key was invalidated on resume; in V2
+            # the key is stable so this re-stores the same value.
             response_data = response.json()
             new_session_api_key = response_data.get('session_api_key')
             if new_session_api_key:
@@ -580,15 +670,20 @@ class RemoteSandboxService(SandboxService):
             # leaked keys from being used while the sandbox is paused.
             stored_sandbox.session_api_key_hash = None
 
-            runtime_data = await self._get_runtime(sandbox_id)
+            is_v2 = self._is_v2(stored_sandbox)
+            runtime_data = await self._get_runtime(sandbox_id, is_v2=is_v2)
             response = await self._send_runtime_api_request(
                 'POST',
                 '/pause',
+                is_v2=is_v2,
                 json={'runtime_id': runtime_data['runtime_id']},
             )
             if response.status_code == 404:
                 return False
             response.raise_for_status()
+            # Note: V2's /pause is asynchronous (200 immediately; the runtime
+            # reaches `paused` shortly after). This is fire-and-forget today; a
+            # future caller needing immediate `paused` would poll GET to confirm.
             return True
 
         except httpx.HTTPError as e:
@@ -605,21 +700,38 @@ class RemoteSandboxService(SandboxService):
             stored_sandbox = await self._get_stored_sandbox(sandbox_id)
             if not stored_sandbox:
                 return False
+            # Resolve the version before deleting the row (the attribute is read
+            # off the in-memory object).
+            is_v2 = self._is_v2(stored_sandbox)
             # Deleting the record also removes the session_api_key_hash,
             # which invalidates any leaked session keys.
             await self.db_session.delete(stored_sandbox)
-            runtime_data = await self._get_runtime(sandbox_id)
+            runtime_data = await self._get_runtime(sandbox_id, is_v2=is_v2)
             response = await self._send_runtime_api_request(
                 'POST',
                 '/stop',
+                is_v2=is_v2,
                 json={'runtime_id': runtime_data['runtime_id']},
             )
             if response.status_code != 404:
                 response.raise_for_status()
+            # Note: V2's /stop is asynchronous (200 immediately; the runtime
+            # reaches `stopped` shortly after). Fire-and-forget is acceptable
+            # here since the stored row is already removed.
             return True
         except httpx.HTTPError as e:
             _logger.error(f'Error deleting sandbox {sandbox_id}: {e}')
             return False
+
+    async def _list_running_session_ids(self, is_v2: bool) -> set[str]:
+        """Return the session ids the given endpoint reports as live (via /list)."""
+        response = await self._send_runtime_api_request('GET', '/list', is_v2=is_v2)
+        content = response.json()
+        return {
+            runtime.get('session_id')
+            for runtime in content['runtimes']
+            if runtime.get('session_id')
+        }
 
     async def pause_old_sandboxes(self, max_num_sandboxes: int) -> list[str]:
         """Pause the oldest sandboxes if there are more than max_num_sandboxes running.
@@ -634,14 +746,13 @@ class RemoteSandboxService(SandboxService):
         if max_num_sandboxes <= 0:
             raise ValueError('max_num_sandboxes must be greater than 0')
 
-        response = await self._send_runtime_api_request(
-            'GET',
-            '/list',
-        )
-        content = response.json()
-        running_session_ids = [
-            runtime.get('session_id') for runtime in content['runtimes']
-        ]
+        running_session_ids = await self._list_running_session_ids(is_v2=False)
+        # A distinct V2 endpoint hosts a separate fleet, so its running
+        # sandboxes won't appear in the V1 /list above — include them. When V2
+        # falls back to the V1 URL (no separate URL configured), the V1 /list
+        # already covers them, so the extra call is skipped.
+        if self.api_url_v2 and self.api_url_v2 != self.api_url:
+            running_session_ids |= await self._list_running_session_ids(is_v2=True)
 
         query = await self._secure_select()
         query = query.filter(StoredRemoteSandbox.id.in_(running_session_ids)).order_by(
@@ -684,7 +795,7 @@ class RemoteSandboxService(SandboxService):
             for stored_remote_sandbox in stored_remote_sandboxes
         }
         runtimes_by_id = await self._get_runtimes_batch(
-            list(stored_remote_sandboxes_by_id)
+            list(stored_remote_sandboxes_by_id.values())
         )
         results = []
         for sandbox_id in sandbox_ids:
@@ -876,6 +987,20 @@ class RemoteSandboxServiceInjector(SandboxServiceInjector):
 
     api_url: str = Field(description='The API URL for remote runtimes')
     api_key: str = Field(description='The API Key for remote runtimes')
+    api_url_v2: str | None = Field(
+        default=None,
+        description=(
+            'Optional separate base URL for Runtime API V2. Falls back to '
+            'api_url when unset, so a same-URL V2 rollout needs no extra config.'
+        ),
+    )
+    api_key_v2: str | None = Field(
+        default=None,
+        description=(
+            'Optional separate API key for Runtime API V2. Falls back to '
+            'api_key when unset.'
+        ),
+    )
     polling_interval: int = Field(
         default=15,
         description=(
@@ -947,4 +1072,6 @@ class RemoteSandboxServiceInjector(SandboxServiceInjector):
                 user_context=user_context,
                 httpx_client=httpx_client,
                 db_session=db_session,
+                api_url_v2=self.api_url_v2,
+                api_key_v2=self.api_key_v2,
             )

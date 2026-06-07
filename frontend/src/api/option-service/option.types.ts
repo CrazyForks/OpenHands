@@ -54,6 +54,10 @@ export interface WebClientConfig {
   gitlab_enabled?: boolean;
   provider_default_hosts?: Partial<Record<Provider, string>>;
   slack_enabled?: boolean;
+  /** Map of Runtime API V2 warm-pool name -> user-facing display name; populates
+   *  the SaaS Sandbox-tab dropdown. Empty/absent unless the deployment sets
+   *  SANDBOX_WARM_RUNTIME_CONFIGS. JSON key order drives dropdown order. */
+  warm_runtime_configs?: Record<string, string>;
   acp_providers?: ACPProviderConfig[];
   /** Jira DC host when DC OAuth is configured; used to pre-fill + lock the
    *  configure form's host field. Null/absent in email-match mode. */

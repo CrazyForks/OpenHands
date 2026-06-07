@@ -645,3 +645,27 @@ class TestGetSlackEnabled:
             clear=True,
         ):
             assert _get_slack_enabled() is False
+
+
+class TestWarmRuntimeConfigs:
+    """The warm_runtime_configs field surfaces SANDBOX_WARM_RUNTIME_CONFIGS to
+    the web client (populating the SaaS Sandbox-tab dropdown)."""
+
+    def _factory(self):
+        from openhands.app_server.web_client.default_web_client_config_injector import (
+            DefaultWebClientConfigInjector,
+        )
+
+        return DefaultWebClientConfigInjector.model_fields[
+            'warm_runtime_configs'
+        ].default_factory
+
+    def test_field_factory_reads_env_var(self):
+        raw = '{"python-gvisor": "Python (gVisor)"}'
+        with patch.dict(os.environ, {'SANDBOX_WARM_RUNTIME_CONFIGS': raw}):
+            assert self._factory()() == {'python-gvisor': 'Python (gVisor)'}
+
+    def test_field_factory_empty_when_unset(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop('SANDBOX_WARM_RUNTIME_CONFIGS', None)
+            assert self._factory()() == {}

@@ -777,7 +777,11 @@ class TestSandboxSearch:
     async def test_get_runtimes_batch_success(self, remote_sandbox_service):
         """Test successful batch runtime retrieval."""
         # Setup
-        sandbox_ids = ['sb1', 'sb2', 'sb3']
+        sandboxes = [
+            create_stored_sandbox(sandbox_id='sb1'),
+            create_stored_sandbox(sandbox_id='sb2'),
+            create_stored_sandbox(sandbox_id='sb3'),
+        ]
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
         mock_response.json.return_value = [
@@ -790,7 +794,7 @@ class TestSandboxSearch:
         )
 
         # Execute
-        result = await remote_sandbox_service._get_runtimes_batch(sandbox_ids)
+        result = await remote_sandbox_service._get_runtimes_batch(sandboxes)
 
         # Verify
         assert len(result) == 3
@@ -822,7 +826,11 @@ class TestSandboxSearch:
     async def test_get_runtimes_batch_partial_results(self, remote_sandbox_service):
         """Test batch runtime retrieval with partial results (some sandboxes not found)."""
         # Setup
-        sandbox_ids = ['sb1', 'sb2', 'sb3']
+        sandboxes = [
+            create_stored_sandbox(sandbox_id='sb1'),
+            create_stored_sandbox(sandbox_id='sb2'),
+            create_stored_sandbox(sandbox_id='sb3'),
+        ]
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
         mock_response.json.return_value = [
@@ -835,7 +843,7 @@ class TestSandboxSearch:
         )
 
         # Execute
-        result = await remote_sandbox_service._get_runtimes_batch(sandbox_ids)
+        result = await remote_sandbox_service._get_runtimes_batch(sandboxes)
 
         # Verify
         assert len(result) == 2
@@ -850,6 +858,9 @@ class TestSandboxSearch:
         stored_sandbox = create_stored_sandbox()
         remote_sandbox_service._get_stored_sandbox = AsyncMock(
             return_value=stored_sandbox
+        )
+        remote_sandbox_service._get_runtime = AsyncMock(
+            return_value=create_runtime_data()
         )
         remote_sandbox_service._to_sandbox_info = MagicMock(
             return_value=SandboxInfo(
@@ -1266,3 +1277,327 @@ class TestConstants:
         """Test that environment variable constants are defined."""
         assert WEBHOOK_CALLBACK_VARIABLE == 'OH_WEBHOOKS_0_BASE_URL'
         assert ALLOW_CORS_ORIGINS_VARIABLE == 'OH_ALLOW_CORS_ORIGINS_0'
+
+
+@pytest.fixture
+def remote_sandbox_service_v2(
+    mock_sandbox_spec_service, mock_user_context, mock_httpx_client, mock_db_session
+):
+    """RemoteSandboxService with a *distinct* Runtime API V2 endpoint configured."""
+    return RemoteSandboxService(
+        sandbox_spec_service=mock_sandbox_spec_service,
+        api_url='https://api.example.com',
+        api_key='test-api-key',
+        web_url='https://web.example.com',
+        resource_factor=1,
+        runtime_class='gvisor',
+        start_sandbox_timeout=120,
+        max_num_sandboxes=10,
+        user_context=mock_user_context,
+        httpx_client=mock_httpx_client,
+        db_session=mock_db_session,
+        api_url_v2='https://v2.example.com',
+        api_key_v2='v2-api-key',
+    )
+
+
+def create_stored_sandbox_v2(
+    sandbox_template: str = 'python-gvisor', **kwargs: Any
+) -> StoredRemoteSandbox:
+    """Helper: a StoredRemoteSandbox marked as V2 (non-null sandbox_template)."""
+    stored = create_stored_sandbox(**kwargs)
+    stored.sandbox_template = sandbox_template
+    return stored
+
+
+class TestRuntimeApiV2:
+    """Runtime API V2 opt-in: endpoint routing, V2 start, hash backfill,
+    mixed-fleet batch, and version-aware /list."""
+
+    # ── Endpoint resolution / version discriminator ──────────────────
+
+    def test_endpoint_v1(self, remote_sandbox_service):
+        assert remote_sandbox_service._endpoint(False) == (
+            'https://api.example.com',
+            'test-api-key',
+        )
+
+    def test_endpoint_v2_falls_back_to_v1_when_unset(self, remote_sandbox_service):
+        # The default fixture leaves api_url_v2/api_key_v2 as None.
+        assert remote_sandbox_service._endpoint(True) == (
+            'https://api.example.com',
+            'test-api-key',
+        )
+
+    def test_endpoint_v2_uses_distinct_url_and_key(self, remote_sandbox_service_v2):
+        assert remote_sandbox_service_v2._endpoint(True) == (
+            'https://v2.example.com',
+            'v2-api-key',
+        )
+        assert remote_sandbox_service_v2._endpoint(False) == (
+            'https://api.example.com',
+            'test-api-key',
+        )
+
+    def test_is_v2_discriminator(self):
+        assert RemoteSandboxService._is_v2(create_stored_sandbox_v2()) is True
+        assert RemoteSandboxService._is_v2(create_stored_sandbox()) is False
+
+    # ── V2 start ─────────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_start_sandbox_v2_posts_template_to_v2_endpoint(
+        self, remote_sandbox_service_v2
+    ):
+        """V2 start sends {sandbox_template, session_id} to the V2 endpoint with
+        the V2 key, omits the V1 workload body, marks the row V2, and tolerates a
+        null session_api_key."""
+        svc = remote_sandbox_service_v2
+        mock_response = MagicMock()
+        # V2 /start returns session_api_key=None (key arrives via status poll).
+        mock_response.json.return_value = create_runtime_data(
+            session_id='sb-v2', status='starting', session_api_key=None
+        )
+        svc.httpx_client.request.return_value = mock_response
+        svc.pause_old_sandboxes = AsyncMock(return_value=[])
+        svc.db_session.add = MagicMock()
+
+        sandbox_info = await svc.start_sandbox(
+            sandbox_id='sb-v2',
+            runtime_api_version='v2',
+            sandbox_template='python-gvisor',
+        )
+
+        call_args = svc.httpx_client.request.call_args
+        assert call_args[0] == ('POST', 'https://v2.example.com/start')
+        assert call_args[1]['headers'] == {'X-API-Key': 'v2-api-key'}
+        body = call_args[1]['json']
+        assert body == {'sandbox_template': 'python-gvisor', 'session_id': 'sb-v2'}
+        assert 'image' not in body and 'command' not in body
+
+        stored = svc.db_session.add.call_args[0][0]
+        assert stored.sandbox_template == 'python-gvisor'
+        # Null key tolerated: no hash stored at start.
+        assert stored.session_api_key_hash is None
+        assert sandbox_info.id == 'sb-v2'
+
+    @pytest.mark.asyncio
+    async def test_start_sandbox_v2_without_template_falls_back_to_v1(
+        self, remote_sandbox_service_v2
+    ):
+        """Defensive: V2 requested without a template posts the V1 body to the V1
+        endpoint and leaves the row unmarked (so its lifecycle stays V1)."""
+        svc = remote_sandbox_service_v2
+        mock_response = MagicMock()
+        mock_response.json.return_value = create_runtime_data(session_id='sb1')
+        svc.httpx_client.request.return_value = mock_response
+        svc.pause_old_sandboxes = AsyncMock(return_value=[])
+        svc.db_session.add = MagicMock()
+
+        await svc.start_sandbox(
+            sandbox_id='sb1',
+            runtime_api_version='v2',
+            sandbox_template=None,
+        )
+
+        call_args = svc.httpx_client.request.call_args
+        assert call_args[0] == ('POST', 'https://api.example.com/start')
+        assert call_args[1]['headers'] == {'X-API-Key': 'test-api-key'}
+        body = call_args[1]['json']
+        assert 'image' in body
+        assert 'sandbox_template' not in body
+        stored = svc.db_session.add.call_args[0][0]
+        assert stored.sandbox_template is None
+
+    @pytest.mark.asyncio
+    async def test_start_sandbox_v1_unchanged_by_default(
+        self, remote_sandbox_service_v2
+    ):
+        """With no version specified, start is identical to V1: V1 body, V1
+        endpoint, unmarked row — even when a V2 endpoint is configured."""
+        svc = remote_sandbox_service_v2
+        mock_response = MagicMock()
+        mock_response.json.return_value = create_runtime_data(session_id='sb1')
+        svc.httpx_client.request.return_value = mock_response
+        svc.pause_old_sandboxes = AsyncMock(return_value=[])
+        svc.db_session.add = MagicMock()
+
+        await svc.start_sandbox(sandbox_id='sb1')
+
+        call_args = svc.httpx_client.request.call_args
+        assert call_args[0][1] == 'https://api.example.com/start'
+        assert 'image' in call_args[1]['json']
+        assert svc.db_session.add.call_args[0][0].sandbox_template is None
+
+    # ── Key-from-poll lazy hash backfill ─────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_sandbox_v2_backfills_hash_and_routes_v2(
+        self, remote_sandbox_service_v2
+    ):
+        """get_sandbox on a V2 row routes to the V2 endpoint and backfills the
+        session_api_key hash once the key appears in the poll response."""
+        from openhands.app_server.sandbox.remote_sandbox_service import (
+            _hash_session_api_key,
+        )
+
+        svc = remote_sandbox_service_v2
+        stored = create_stored_sandbox_v2(sandbox_id='sb-v2', session_api_key_hash=None)
+        svc._get_stored_sandbox = AsyncMock(return_value=stored)
+        mock_response = MagicMock()
+        mock_response.json.return_value = create_runtime_data(
+            session_id='sb-v2', status='running', session_api_key='the-key'
+        )
+        svc.httpx_client.request.return_value = mock_response
+
+        await svc.get_sandbox('sb-v2')
+
+        call_args = svc.httpx_client.request.call_args
+        assert call_args[0][1] == 'https://v2.example.com/sessions/sb-v2'
+        assert call_args[1]['headers'] == {'X-API-Key': 'v2-api-key'}
+        assert stored.session_api_key_hash == _hash_session_api_key('the-key')
+
+    @pytest.mark.asyncio
+    async def test_get_sandbox_v1_does_not_overwrite_existing_hash(
+        self, remote_sandbox_service
+    ):
+        """Backfill only fills a missing hash; an existing V1 hash is untouched."""
+        svc = remote_sandbox_service
+        stored = create_stored_sandbox(
+            sandbox_id='sb1', session_api_key_hash='preexisting'
+        )
+        svc._get_stored_sandbox = AsyncMock(return_value=stored)
+        mock_response = MagicMock()
+        mock_response.json.return_value = create_runtime_data(
+            session_id='sb1', status='running', session_api_key='new-key'
+        )
+        svc.httpx_client.request.return_value = mock_response
+
+        await svc.get_sandbox('sb1')
+
+        assert stored.session_api_key_hash == 'preexisting'
+
+    # ── Mixed-fleet batch + version-aware /list ──────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_runtimes_batch_splits_by_version(
+        self, remote_sandbox_service_v2
+    ):
+        """A mixed list of stored sandboxes is queried per-endpoint and merged."""
+        svc = remote_sandbox_service_v2
+        v1a = create_stored_sandbox(sandbox_id='v1a')
+        v2a = create_stored_sandbox_v2(sandbox_id='v2a')
+
+        def fake_request(method, url, headers=None, params=None):
+            ids = [v for (k, v) in (params or []) if k == 'ids']
+            resp = MagicMock()
+            resp.json.return_value = [
+                create_runtime_data(session_id=i, status='running') for i in ids
+            ]
+            return resp
+
+        svc.httpx_client.request = AsyncMock(side_effect=fake_request)
+
+        result = await svc._get_runtimes_batch([v1a, v2a])
+
+        assert set(result.keys()) == {'v1a', 'v2a'}
+        for call in svc.httpx_client.request.call_args_list:
+            url = call.args[1]
+            ids = [v for (k, v) in call.kwargs['params'] if k == 'ids']
+            if 'v2.example.com' in url:
+                assert ids == ['v2a']
+                assert call.kwargs['headers'] == {'X-API-Key': 'v2-api-key'}
+            else:
+                assert url == 'https://api.example.com/sessions/batch'
+                assert ids == ['v1a']
+                assert call.kwargs['headers'] == {'X-API-Key': 'test-api-key'}
+
+    @pytest.mark.asyncio
+    async def test_list_running_session_ids_routes_by_version(
+        self, remote_sandbox_service_v2
+    ):
+        svc = remote_sandbox_service_v2
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            'runtimes': [
+                {'session_id': 'a'},
+                {'session_id': 'b'},
+                {'session_id': None},  # dropped
+            ]
+        }
+        svc.httpx_client.request.return_value = mock_response
+
+        ids = await svc._list_running_session_ids(is_v2=True)
+
+        assert ids == {'a', 'b'}
+        call_args = svc.httpx_client.request.call_args
+        assert call_args[0][1] == 'https://v2.example.com/list'
+        assert call_args[1]['headers'] == {'X-API-Key': 'v2-api-key'}
+
+    @pytest.mark.asyncio
+    async def test_pause_old_sandboxes_lists_both_endpoints_when_v2_configured(
+        self, remote_sandbox_service_v2
+    ):
+        """With a distinct V2 URL, the cleanup sweep lists both fleets so a V2
+        sandbox isn't invisible to a V1-only /list."""
+        svc = remote_sandbox_service_v2
+        seen: list[bool] = []
+
+        async def fake_list(is_v2: bool):
+            seen.append(is_v2)
+            return set()
+
+        svc._list_running_session_ids = AsyncMock(side_effect=fake_list)
+        svc._secure_select = AsyncMock(return_value=MagicMock())
+        svc.db_session.execute = AsyncMock(return_value=[])
+
+        await svc.pause_old_sandboxes(5)
+
+        assert seen == [False, True]
+
+    @pytest.mark.asyncio
+    async def test_pause_old_sandboxes_single_list_when_v2_not_configured(
+        self, remote_sandbox_service
+    ):
+        """V1-only deployments issue exactly one /list — behaviour unchanged."""
+        svc = remote_sandbox_service  # api_url_v2 is None -> V2 falls back to V1
+        seen: list[bool] = []
+
+        async def fake_list(is_v2: bool):
+            seen.append(is_v2)
+            return set()
+
+        svc._list_running_session_ids = AsyncMock(side_effect=fake_list)
+        svc._secure_select = AsyncMock(return_value=MagicMock())
+        svc.db_session.execute = AsyncMock(return_value=[])
+
+        await svc.pause_old_sandboxes(5)
+
+        assert seen == [False]
+
+    # ── Lifecycle routing for an existing V2 sandbox ─────────────────
+
+    @pytest.mark.asyncio
+    async def test_resume_sandbox_v2_routes_to_v2_endpoint(
+        self, remote_sandbox_service_v2
+    ):
+        svc = remote_sandbox_service_v2
+        stored = create_stored_sandbox_v2(sandbox_id='sb-v2')
+        svc._get_stored_sandbox = AsyncMock(return_value=stored)
+        svc._get_runtime = AsyncMock(
+            return_value=create_runtime_data(session_id='sb-v2')
+        )
+        svc.pause_old_sandboxes = AsyncMock(return_value=[])
+        resume_response = MagicMock()
+        resume_response.status_code = 200
+        resume_response.json.return_value = {'session_api_key': 'stable-key'}
+        svc.httpx_client.request.return_value = resume_response
+
+        result = await svc.resume_sandbox('sb-v2')
+
+        assert result is True
+        # _get_runtime told to use V2; /resume sent to the V2 endpoint.
+        svc._get_runtime.assert_awaited_once_with('sb-v2', is_v2=True)
+        call_args = svc.httpx_client.request.call_args
+        assert call_args[0][1] == 'https://v2.example.com/resume'
+        assert call_args[1]['headers'] == {'X-API-Key': 'v2-api-key'}

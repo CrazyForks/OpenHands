@@ -6374,6 +6374,21 @@
     "uk": "Увімкнути аналіз розв'язності",
     "ca": "Activa l'anàlisi de resolubilitat"
   },
+  "SETTINGS$NAV_SANDBOX": {
+    "en": "Sandbox"
+  },
+  "SETTINGS$USE_RUNTIME_V2": {
+    "en": "Use Runtime V2"
+  },
+  "SETTINGS$WARM_RUNTIME_CONFIG": {
+    "en": "Warm runtime configuration"
+  },
+  "SETTINGS$SANDBOX_TAB_DESCRIPTION": {
+    "en": "Choose how your sandboxes run. Opt into Runtime V2 and select a warm runtime configuration to start your sandboxes from a pre-warmed pool."
+  },
+  "SETTINGS$SANDBOX_NOT_AVAILABLE": {
+    "en": "Runtime V2 is not available for this deployment."
+  },
   "SETTINGS$SANDBOX_GROUPING_STRATEGY": {
     "en": "Sandbox Grouping Strategy",
     "ja": "サンドボックスグループ化戦略",

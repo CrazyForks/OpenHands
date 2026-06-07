@@ -58,13 +58,24 @@ class SandboxService(ABC):
 
     @abstractmethod
     async def start_sandbox(
-        self, sandbox_spec_id: str | None = None, sandbox_id: str | None = None
+        self,
+        sandbox_spec_id: str | None = None,
+        sandbox_id: str | None = None,
+        *,
+        runtime_api_version: str = 'v1',
+        sandbox_template: str | None = None,
     ) -> SandboxInfo:
         """Begin the process of starting a sandbox.
 
         Return the info on the new sandbox. If no spec is selected, use the default.
         If sandbox_id is provided, it will be used as the sandbox identifier instead
         of generating a random one.
+
+        ``runtime_api_version`` / ``sandbox_template`` are an opt-in (SaaS only)
+        for routing through Runtime API V2: when ``runtime_api_version == 'v2'``
+        the sandbox is started against the configured V2 endpoint using
+        ``sandbox_template`` (a warm-pool name) instead of a workload spec.
+        Implementations that don't support V2 accept and ignore them.
         """
 
     @abstractmethod

@@ -337,6 +337,10 @@ def config_from_env() -> AppServerConfig:
             config.sandbox = RemoteSandboxServiceInjector(
                 api_key=os.environ['SANDBOX_API_KEY'],
                 api_url=os.environ['SANDBOX_REMOTE_RUNTIME_API_URL'],
+                # Optional separate Runtime API V2 endpoint (SaaS opt-in). Each
+                # falls back to the V1 value in the service when unset.
+                api_url_v2=os.getenv('SANDBOX_REMOTE_RUNTIME_API_URL_V2'),
+                api_key_v2=os.getenv('SANDBOX_API_KEY_V2'),
             )
         elif os.getenv('RUNTIME') in ('local', 'process'):
             config.sandbox = ProcessSandboxServiceInjector()

@@ -105,6 +105,9 @@ const normalizeSettingsResponse = (settings: Partial<Settings>): Settings => {
     sandbox_grouping_strategy:
       settings.sandbox_grouping_strategy ??
       DEFAULT_SETTINGS.sandbox_grouping_strategy,
+    use_runtime_v2: settings.use_runtime_v2 ?? DEFAULT_SETTINGS.use_runtime_v2,
+    warm_runtime_config:
+      settings.warm_runtime_config ?? DEFAULT_SETTINGS.warm_runtime_config,
   };
 };
 

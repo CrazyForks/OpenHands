@@ -146,4 +146,8 @@ export type Settings = {
   conversation_settings_schema?: SettingsSchema | null;
   conversation_settings?: Record<string, SettingsValue> | null;
   sandbox_grouping_strategy?: SandboxGroupingStrategy;
+  // Runtime API V2 opt-in (SaaS only). ``warm_runtime_config`` is the chosen
+  // warm-pool / sandbox_template name; only meaningful when use_runtime_v2 is on.
+  use_runtime_v2?: boolean;
+  warm_runtime_config?: string | null;
 };

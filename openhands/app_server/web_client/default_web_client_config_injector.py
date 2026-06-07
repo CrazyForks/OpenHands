@@ -9,6 +9,9 @@ from openhands.app_server.integrations.jira_dc.config import (
 )
 from openhands.app_server.integrations.provider import ProviderHandler
 from openhands.app_server.integrations.service_types import ProviderType
+from openhands.app_server.sandbox.warm_runtime_configs import (
+    get_warm_runtime_configs,
+)
 from openhands.app_server.web_client.web_client_config_injector import (
     WebClientConfigInjector,
 )
@@ -206,6 +209,9 @@ class DefaultWebClientConfigInjector(WebClientConfigInjector):
         }
     )
     slack_enabled: bool = Field(default_factory=_get_slack_enabled)
+    warm_runtime_configs: dict[str, str] = Field(
+        default_factory=get_warm_runtime_configs
+    )
     jira_dc_oauth_host: str | None = Field(default_factory=_get_jira_dc_oauth_host)
     jira_dc_service_account_managed: bool = Field(
         default_factory=_is_jira_dc_service_account_managed
@@ -249,6 +255,7 @@ class DefaultWebClientConfigInjector(WebClientConfigInjector):
             gitlab_enabled=self.gitlab_enabled,
             provider_default_hosts=self.provider_default_hosts,
             slack_enabled=self.slack_enabled,
+            warm_runtime_configs=self.warm_runtime_configs,
             jira_dc_oauth_host=self.jira_dc_oauth_host,
             jira_dc_service_account_managed=self.jira_dc_service_account_managed,
             jira_dc_service_account_email=self.jira_dc_service_account_email,

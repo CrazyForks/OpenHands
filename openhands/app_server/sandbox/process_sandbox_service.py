@@ -288,9 +288,18 @@ class ProcessSandboxService(SandboxService):
         return None
 
     async def start_sandbox(
-        self, sandbox_spec_id: str | None = None, sandbox_id: str | None = None
+        self,
+        sandbox_spec_id: str | None = None,
+        sandbox_id: str | None = None,
+        *,
+        runtime_api_version: str = 'v1',
+        sandbox_template: str | None = None,
     ) -> SandboxInfo:
-        """Start a new sandbox."""
+        """Start a new sandbox.
+
+        ``runtime_api_version`` / ``sandbox_template`` are accepted for interface
+        compatibility with the remote (V2-capable) service and ignored here.
+        """
         # Get sandbox spec
         if sandbox_spec_id is None:
             sandbox_spec = await self.sandbox_spec_service.get_default_sandbox_spec()

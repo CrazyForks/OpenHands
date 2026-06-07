@@ -39,6 +39,12 @@ class User(Base):
     git_user_name: Mapped[str | None] = mapped_column(String, nullable=True)
     git_user_email: Mapped[str | None] = mapped_column(String, nullable=True)
     sandbox_grouping_strategy: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Runtime API V2 opt-in (SaaS only). Maps by name to Settings.use_runtime_v2
+    # / Settings.warm_runtime_config via SaasSettingsStore. The bool carries a
+    # DB-level ``server_default false`` (see migration 118) so load() never reads
+    # NULL for the non-optional Settings field.
+    use_runtime_v2: Mapped[bool | None] = mapped_column(nullable=True)
+    warm_runtime_config: Mapped[str | None] = mapped_column(String, nullable=True)
     disabled_skills: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     llm_profiles: Mapped[dict[str, Any] | None] = mapped_column(
         EncryptedJSON, nullable=True

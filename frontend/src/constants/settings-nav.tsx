@@ -121,6 +121,12 @@ export const SAAS_NAV_ITEMS: SettingsNavItem[] = [
     section: "user",
   },
   {
+    icon: <ServerProcessIcon width={22} height={22} />,
+    to: "/settings/sandbox",
+    text: "SETTINGS$NAV_SANDBOX",
+    section: "user",
+  },
+  {
     icon: <CreditCardIcon width={22} height={22} />,
     to: "/settings/billing",
     text: "SETTINGS$NAV_BILLING",

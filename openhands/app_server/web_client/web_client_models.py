@@ -52,6 +52,10 @@ class WebClientConfig(DiscriminatedUnionMixin):
     github_app_slug: str | None
     gitlab_enabled: bool = False
     provider_default_hosts: dict[str, str] = Field(default_factory=dict)
+    # Map of Runtime API V2 warm-pool name -> user-facing display name, used to
+    # populate the "Warm runtime configuration" dropdown on the SaaS Sandbox
+    # settings tab. Empty unless the deployment sets SANDBOX_WARM_RUNTIME_CONFIGS.
+    warm_runtime_configs: dict[str, str] = Field(default_factory=dict)
     slack_enabled: bool = False
     acp_providers: list[ACPProviderConfig] = Field(default_factory=list)
     # Hostname of the Jira Data Center server when DC OAuth is configured, so the

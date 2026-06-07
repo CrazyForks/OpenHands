@@ -99,6 +99,15 @@ export function useSettingsNavItems(): SettingsNavRenderedItem[] {
     items = items.filter((item) => !PERSONAL_LLM_PATHS.has(item.to));
   }
 
+  // Hide the Sandbox tab (Runtime API V2 opt-in) unless the deployment
+  // configured warm runtime pools (SANDBOX_WARM_RUNTIME_CONFIGS). The item only
+  // exists in SAAS_NAV_ITEMS, so this is a no-op in OSS mode.
+  const hasWarmRuntimeConfigs =
+    Object.keys(config?.warm_runtime_configs ?? {}).length > 0;
+  if (!hasWarmRuntimeConfigs) {
+    items = items.filter((item) => item.to !== "/settings/sandbox");
+  }
+
   const buildRenderedItem = (
     item: SettingsNavItem,
   ): SettingsNavRenderedItem => {

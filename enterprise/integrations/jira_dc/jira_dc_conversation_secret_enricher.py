@@ -64,22 +64,34 @@ async def _get_effective_org_id(user_context: UserContext) -> UUID | None:
     return None
 
 
+async def _effective_org_matches(
+    *,
+    workspace_id: int,
+    workspace_org_id: UUID,
+    user_context: UserContext,
+) -> bool:
+    effective_org_id = await _get_effective_org_id(user_context)
+    if effective_org_id is None:
+        logger.warning(
+            '[Jira DC] Skipping Jira DC token injection because workspace %s is '
+            'org-scoped but no effective org was resolved',
+            workspace_id,
+        )
+        return False
+    return effective_org_id == workspace_org_id
+
+
 async def _workspace_matches_context(
     workspace: JiraDcWorkspace, user_context: UserContext
 ) -> bool:
     workspace_org_id = getattr(workspace, 'org_id', None)
     if workspace_org_id is None:
         return True
-
-    effective_org_id = await _get_effective_org_id(user_context)
-    if effective_org_id is None:
-        logger.warning(
-            '[Jira DC] Skipping Jira DC token injection because workspace %s is '
-            'org-scoped but no effective org was resolved',
-            workspace.id,
-        )
-        return False
-    return effective_org_id == workspace_org_id
+    return await _effective_org_matches(
+        workspace_id=workspace.id,
+        workspace_org_id=workspace_org_id,
+        user_context=user_context,
+    )
 
 
 async def _resolve_user_token(

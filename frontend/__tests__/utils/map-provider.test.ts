@@ -24,5 +24,9 @@ test("mapProvider", () => {
   expect(mapProvider("replicate")).toBe("Replicate");
   expect(mapProvider("voyage")).toBe("Voyage AI");
   expect(mapProvider("openrouter")).toBe("OpenRouter");
+  expect(mapProvider("openhands")).toBe("OpenHands");
   expect(mapProvider("clarifai")).toBe("Clarifai");
+  expect(mapProvider("openhands", { openhandsLabel: "Admin-managed" })).toBe(
+    "Admin-managed",
+  );
 });

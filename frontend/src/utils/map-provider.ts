@@ -28,10 +28,18 @@ export const MAP_PROVIDER = {
   clarifai: "Clarifai",
 };
 
-export const mapProvider = (provider: string) =>
-  Object.keys(MAP_PROVIDER).includes(provider)
+export const mapProvider = (
+  provider: string,
+  options?: { openhandsLabel?: string },
+) => {
+  if (provider === "openhands" && options?.openhandsLabel) {
+    return options.openhandsLabel;
+  }
+
+  return Object.keys(MAP_PROVIDER).includes(provider)
     ? MAP_PROVIDER[provider as keyof typeof MAP_PROVIDER]
     : provider;
+};
 
 export const getProviderId = (displayName: string): string => {
   const entry = Object.entries(MAP_PROVIDER).find(

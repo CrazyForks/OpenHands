@@ -119,6 +119,12 @@ def _get_slack_enabled() -> bool:
     )
 
 
+def _get_managed_litellm_base_url() -> str | None:
+    """Return the configured managed LiteLLM proxy URL, if any."""
+    url = os.getenv('LITE_LLM_API_URL', '').strip()
+    return url if url else None
+
+
 def _get_jira_dc_oauth_host() -> str | None:
     """Hostname of the Jira Data Center server when DC OAuth is configured.
 
@@ -206,6 +212,9 @@ class DefaultWebClientConfigInjector(WebClientConfigInjector):
         }
     )
     slack_enabled: bool = Field(default_factory=_get_slack_enabled)
+    managed_litellm_base_url: str | None = Field(
+        default_factory=_get_managed_litellm_base_url
+    )
     jira_dc_oauth_host: str | None = Field(default_factory=_get_jira_dc_oauth_host)
     jira_dc_service_account_managed: bool = Field(
         default_factory=_is_jira_dc_service_account_managed
@@ -249,6 +258,7 @@ class DefaultWebClientConfigInjector(WebClientConfigInjector):
             gitlab_enabled=self.gitlab_enabled,
             provider_default_hosts=self.provider_default_hosts,
             slack_enabled=self.slack_enabled,
+            managed_litellm_base_url=self.managed_litellm_base_url,
             jira_dc_oauth_host=self.jira_dc_oauth_host,
             jira_dc_service_account_managed=self.jira_dc_service_account_managed,
             jira_dc_service_account_email=self.jira_dc_service_account_email,

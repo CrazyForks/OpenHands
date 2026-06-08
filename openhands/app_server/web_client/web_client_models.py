@@ -53,6 +53,10 @@ class WebClientConfig(DiscriminatedUnionMixin):
     gitlab_enabled: bool = False
     provider_default_hosts: dict[str, str] = Field(default_factory=dict)
     slack_enabled: bool = False
+    # Configured bundled/managed LiteLLM proxy URL. The frontend treats this
+    # like a provider default so it does not expose internal cluster URLs as
+    # custom Advanced settings in OHE.
+    managed_litellm_base_url: str | None = None
     acp_providers: list[ACPProviderConfig] = Field(default_factory=list)
     # Hostname of the Jira Data Center server when DC OAuth is configured, so the
     # configure form can pre-fill and lock the host field (the OAuth callback only

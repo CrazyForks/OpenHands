@@ -13,6 +13,8 @@ import { HelpLink } from "#/ui/help-link";
 import { PRODUCT_URL } from "#/utils/constants";
 import { useSearchProviders } from "#/hooks/query/use-search-providers";
 import { useProviderModels } from "#/hooks/query/use-provider-models";
+import { useConfig } from "#/hooks/query/use-config";
+import { Typography } from "#/ui/typography";
 
 interface ModelSelectorProps {
   isDisabled?: boolean;
@@ -39,6 +41,7 @@ export function ModelSelector({
     null,
   );
   const [selectedModel, setSelectedModel] = React.useState<string | null>(null);
+  const { t } = useTranslation();
 
   const { data: providers = [] } = useSearchProviders();
   const {
@@ -46,6 +49,18 @@ export function ModelSelector({
     isLoading: isLoadingModels,
     error: modelsError,
   } = useProviderModels(selectedProvider);
+  const { data: config } = useConfig();
+  const isOheManagedMode =
+    config?.app_mode === "saas" &&
+    config?.feature_flags?.deployment_mode === "self_hosted";
+  const openHandsProviderLabel = isOheManagedMode
+    ? t(I18nKey.SETTINGS$ADMIN_MANAGED_PROVIDER)
+    : undefined;
+  const getProviderLabel = React.useCallback(
+    (provider: string) =>
+      mapProvider(provider, { openhandsLabel: openHandsProviderLabel }),
+    [openHandsProviderLabel],
+  );
 
   const verifiedProviders = React.useMemo(
     () => providers.filter((p) => p.verified),
@@ -99,8 +114,6 @@ export function ModelSelector({
     setLitellmId(null);
   };
 
-  const { t } = useTranslation();
-
   return (
     <div
       className={cn(
@@ -143,7 +156,7 @@ export function ModelSelector({
                 data-testid={`provider-item-${provider.name}`}
                 key={provider.name}
               >
-                {mapProvider(provider.name)}
+                {getProviderLabel(provider.name)}
               </AutocompleteItem>
             ))}
           </AutocompleteSection>
@@ -151,7 +164,7 @@ export function ModelSelector({
             <AutocompleteSection title={t(I18nKey.MODEL_SELECTOR$OTHERS)}>
               {unverifiedProviders.map((provider) => (
                 <AutocompleteItem key={provider.name}>
-                  {mapProvider(provider.name)}
+                  {getProviderLabel(provider.name)}
                 </AutocompleteItem>
               ))}
             </AutocompleteSection>
@@ -159,7 +172,16 @@ export function ModelSelector({
         </Autocomplete>
       </fieldset>
 
-      {selectedProvider === "openhands" && (
+      {selectedProvider === "openhands" && isOheManagedMode ? (
+        <Typography.Paragraph
+          testId="admin-managed-models-help"
+          className="text-xs text-tertiary-alt"
+        >
+          {t(I18nKey.SETTINGS$ADMIN_MANAGED_MODELS_HELP)}
+        </Typography.Paragraph>
+      ) : null}
+
+      {selectedProvider === "openhands" && !isOheManagedMode ? (
         <HelpLink
           testId="openhands-account-help"
           text={t(I18nKey.SETTINGS$NEED_OPENHANDS_ACCOUNT)}
@@ -168,7 +190,7 @@ export function ModelSelector({
           size="settings"
           linkColor="white"
         />
-      )}
+      ) : null}
 
       <fieldset className="flex flex-col gap-2.5 w-full">
         <label className={cn("text-sm", labelClassName)}>

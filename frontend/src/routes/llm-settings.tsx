@@ -85,11 +85,25 @@ const normalizeBaseUrl = (baseUrl: string) => {
   }
 };
 
-const isProviderDefaultBaseUrl = (model: string, baseUrl: string) => {
+const isProviderDefaultBaseUrl = (
+  model: string,
+  baseUrl: string,
+  managedLiteLlmBaseUrl?: string,
+) => {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   const { provider } = extractModelAndProvider(model);
 
   if (provider) {
+    const isManagedOpenHandsProvider =
+      provider === "openhands" || provider === "litellm_proxy";
+    if (
+      isManagedOpenHandsProvider &&
+      managedLiteLlmBaseUrl &&
+      normalizedBaseUrl === normalizeBaseUrl(managedLiteLlmBaseUrl)
+    ) {
+      return true;
+    }
+
     const knownDefaults = KNOWN_PROVIDER_DEFAULT_BASE_URLS[provider];
     if (knownDefaults) {
       return knownDefaults.has(normalizedBaseUrl);
@@ -171,6 +185,9 @@ export function LlmSettingsScreen({
   );
 
   const isSaasMode = config?.app_mode === "saas";
+  const isOheManagedMode =
+    isSaasMode && config?.feature_flags?.deployment_mode === "self_hosted";
+  const managedLiteLlmBaseUrl = config?.managed_litellm_base_url?.trim();
 
   React.useEffect(() => {
     if (settings?.llm_model) {
@@ -231,11 +248,15 @@ export function LlmSettingsScreen({
       const trimmedBaseUrl = currentSettings.llm_base_url?.trim() ?? "";
       const hasCustomBaseUrl =
         trimmedBaseUrl.length > 0 &&
-        !isProviderDefaultBaseUrl(currentModel, trimmedBaseUrl);
+        !isProviderDefaultBaseUrl(
+          currentModel,
+          trimmedBaseUrl,
+          managedLiteLlmBaseUrl,
+        );
 
       return hasCustomBaseUrl ? "all" : "basic";
     },
-    [initialViewHint, isSaasMode, scope],
+    [initialViewHint, isSaasMode, managedLiteLlmBaseUrl, scope],
   );
 
   const buildHeader = React.useCallback(
@@ -255,7 +276,8 @@ export function LlmSettingsScreen({
           : derivedProvider;
       const shouldUseOpenHandsKey =
         isSaasMode && activeProvider === "openhands";
-      const showOpenHandsApiKeyHelp = modelValue.startsWith("openhands/");
+      const showOpenHandsApiKeyHelp =
+        modelValue.startsWith("openhands/") && !isOheManagedMode;
 
       const renderApiKeyInput = (testId: string, helpTestId: string) => {
         if (shouldUseOpenHandsKey) {
@@ -389,6 +411,7 @@ export function LlmSettingsScreen({
     },
     [
       infoMessageKey,
+      isOheManagedMode,
       isSaasMode,
       defaultModel,
       profileName,

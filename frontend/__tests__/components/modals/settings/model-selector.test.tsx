@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,12 +9,16 @@ import type {
 } from "#/api/config-service/config-service.types";
 
 const mockProviders: LLMProvider[] = [
+  { name: "openhands", verified: true },
   { name: "openai", verified: true },
   { name: "azure", verified: false },
   { name: "vertex_ai", verified: false },
 ];
 
 const mockModelsByProvider: Record<string, LLMModel[]> = {
+  openhands: [
+    { provider: "openhands", name: "claude-sonnet", verified: true },
+  ],
   openai: [
     { provider: "openai", name: "gpt-4o", verified: true },
     { provider: "openai", name: "gpt-4o-mini", verified: true },
@@ -39,6 +43,15 @@ vi.mock("#/hooks/query/use-provider-models", () => ({
   }),
 }));
 
+let mockConfig = {
+  app_mode: "oss",
+  feature_flags: {},
+};
+
+vi.mock("#/hooks/query/use-config", () => ({
+  useConfig: () => ({ data: mockConfig, isLoading: false }),
+}));
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => {
@@ -47,6 +60,11 @@ vi.mock("react-i18next", () => ({
         LLM$MODEL: "LLM Model",
         LLM$SELECT_PROVIDER_PLACEHOLDER: "Select a provider",
         LLM$SELECT_MODEL_PLACEHOLDER: "Select a model",
+        SETTINGS$ADMIN_MANAGED_PROVIDER: "Admin-managed",
+        SETTINGS$ADMIN_MANAGED_MODELS_HELP:
+          "These models are configured for this OpenHands Enterprise instance by your administrator.",
+        SETTINGS$NEED_OPENHANDS_ACCOUNT: "Need an OpenHands Account?",
+        SETTINGS$CLICK_HERE: "Click here",
       };
       return translations[key] || key;
     },
@@ -63,6 +81,13 @@ function renderWithQuery(ui: React.ReactElement) {
 }
 
 describe("ModelSelector", () => {
+  beforeEach(() => {
+    mockConfig = {
+      app_mode: "oss",
+      feature_flags: {},
+    };
+  });
+
   it("should display the provider selector", async () => {
     const user = userEvent.setup();
     renderWithQuery(<ModelSelector />);
@@ -75,6 +100,30 @@ describe("ModelSelector", () => {
     expect(screen.getByText("OpenAI")).toBeInTheDocument();
     expect(screen.getByText("Azure")).toBeInTheDocument();
     expect(screen.getByText("VertexAI")).toBeInTheDocument();
+  });
+
+  it("labels managed OpenHands models as admin-managed in OHE", async () => {
+    mockConfig = {
+      app_mode: "saas",
+      feature_flags: { deployment_mode: "self_hosted" },
+    };
+
+    const user = userEvent.setup();
+    renderWithQuery(<ModelSelector />);
+
+    const providerSelector = screen.getByLabelText("LLM Provider");
+    await user.click(providerSelector);
+    await user.click(screen.getByText("Admin-managed"));
+
+    expect(screen.getByLabelText("LLM Provider")).toHaveValue(
+      "Admin-managed",
+    );
+    expect(screen.getByTestId("admin-managed-models-help")).toHaveTextContent(
+      "These models are configured for this OpenHands Enterprise instance by your administrator.",
+    );
+    expect(
+      screen.queryByTestId("openhands-account-help"),
+    ).not.toBeInTheDocument();
   });
 
   it("should disable the model selector if the provider is not selected", async () => {

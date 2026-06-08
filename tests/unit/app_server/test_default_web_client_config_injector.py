@@ -120,6 +120,44 @@ class TestGetAuthUrl:
             assert result is None
 
 
+class TestGetManagedLiteLlmBaseUrl:
+    """Test cases for _get_managed_litellm_base_url helper function."""
+
+    def test_returns_env_var_when_set(self):
+        """When LITE_LLM_API_URL is set, return that value."""
+        from openhands.app_server.web_client.default_web_client_config_injector import (
+            _get_managed_litellm_base_url,
+        )
+
+        with patch.dict(
+            os.environ, {'LITE_LLM_API_URL': 'http://openhands-litellm:4000'}
+        ):
+            result = _get_managed_litellm_base_url()
+            assert result == 'http://openhands-litellm:4000'
+
+    def test_returns_none_when_env_var_unset(self):
+        """When LITE_LLM_API_URL is not set, return None."""
+        from openhands.app_server.web_client.default_web_client_config_injector import (
+            _get_managed_litellm_base_url,
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = _get_managed_litellm_base_url()
+            assert result is None
+
+    def test_strips_whitespace_from_env_var(self):
+        """When LITE_LLM_API_URL has whitespace, strip it."""
+        from openhands.app_server.web_client.default_web_client_config_injector import (
+            _get_managed_litellm_base_url,
+        )
+
+        with patch.dict(
+            os.environ, {'LITE_LLM_API_URL': '  http://openhands-litellm:4000  '}
+        ):
+            result = _get_managed_litellm_base_url()
+            assert result == 'http://openhands-litellm:4000'
+
+
 class TestGetFeatureFlags:
     """Test cases for _get_feature_flags helper function."""
 

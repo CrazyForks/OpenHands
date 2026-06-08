@@ -240,6 +240,8 @@ function getPayloadAgentSettings(
 
 async function renderLlmSettingsScreen({
   appMode = "oss",
+  deploymentMode,
+  managedLiteLlmBaseUrl,
   organizationId = "1",
   meData,
   organizations,
@@ -247,6 +249,8 @@ async function renderLlmSettingsScreen({
   view = "form",
 }: {
   appMode?: "oss" | "saas";
+  deploymentMode?: "cloud" | "self_hosted";
+  managedLiteLlmBaseUrl?: string | null;
   organizationId?: string;
   meData?: OrganizationMember;
   organizations?: Organization[];
@@ -265,7 +269,13 @@ async function renderLlmSettingsScreen({
 
   useSelectedOrganizationStore.setState({ organizationId });
   mockUseConfig.mockReturnValue({
-    data: { app_mode: appMode },
+    data: {
+      app_mode: appMode,
+      feature_flags: {
+        deployment_mode: deploymentMode,
+      },
+      managed_litellm_base_url: managedLiteLlmBaseUrl,
+    },
     isLoading: false,
   });
 
@@ -307,7 +317,7 @@ beforeEach(() => {
   resetTestHandlersMockSettings();
   mockUseSearchParams.mockReturnValue([{ get: () => null }, vi.fn()]);
   mockUseConfig.mockReturnValue({
-    data: { app_mode: "oss" },
+    data: { app_mode: "oss", feature_flags: {} },
     isLoading: false,
   });
   useSelectedOrganizationStore.setState({ organizationId: "1" });
@@ -583,6 +593,60 @@ describe("LlmSettingsScreen", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("defaults to basic view when OHE org settings use the managed LiteLLM base URL", async () => {
+    const schema = structuredClone(
+      MOCK_DEFAULT_USER_SETTINGS.agent_settings_schema!,
+    );
+    const llmSection = schema.sections.find((section) => section.key === "llm");
+
+    if (!llmSection) {
+      throw new Error("Expected llm section in test schema");
+    }
+
+    llmSection.fields.push({
+      key: "llm.timeout",
+      label: "Timeout",
+      section: "llm",
+      section_label: "LLM",
+      value_type: "integer",
+      default: 30,
+      choices: [],
+      depends_on: [],
+      prominence: "minor",
+      secret: false,
+      required: false,
+    });
+
+    vi.spyOn(organizationService, "getOrganizationSettings").mockResolvedValue(
+      buildSettings({
+        llm_model: "openhands/claude-sonnet",
+        llm_base_url: "http://openhands-litellm:4000",
+        agent_settings_schema: schema,
+        agent_settings: {
+          llm: {
+            model: "openhands/claude-sonnet",
+            base_url: "http://openhands-litellm:4000",
+          },
+        },
+      }),
+    );
+
+    await renderLlmSettingsScreen({
+      appMode: "saas",
+      deploymentMode: "self_hosted",
+      managedLiteLlmBaseUrl: "http://openhands-litellm:4000",
+      scope: "org",
+    });
+
+    await screen.findByTestId("llm-settings-form-basic");
+    expect(
+      screen.queryByTestId("sdk-settings-llm.timeout"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("llm-settings-form-advanced"),
+    ).not.toBeInTheDocument();
+  });
+
   it("defaults to basic view on first personal SaaS visit even when effective settings include inherited org-only LLM fields", async () => {
     const schema = structuredClone(
       MOCK_DEFAULT_USER_SETTINGS.agent_settings_schema!,
@@ -642,6 +706,34 @@ describe("LlmSettingsScreen", () => {
     await screen.findByTestId("llm-settings-screen");
     expect(screen.queryByTestId("llm-api-key-input")).not.toBeInTheDocument();
     expect(screen.getByTestId("openhands-api-key-help")).toBeInTheDocument();
+  });
+
+  it("hides SaaS OpenHands API key help for OHE managed models", async () => {
+    vi.spyOn(SettingsService, "getSettings").mockResolvedValue(
+      buildSettings({
+        llm_model: "openhands/claude-sonnet",
+        llm_base_url: "http://openhands-litellm:4000",
+        agent_settings: {
+          llm: {
+            model: "openhands/claude-sonnet",
+            base_url: "http://openhands-litellm:4000",
+          },
+        },
+      }),
+    );
+
+    await renderLlmSettingsScreen({
+      appMode: "saas",
+      deploymentMode: "self_hosted",
+      managedLiteLlmBaseUrl: "http://openhands-litellm:4000",
+    });
+
+    await screen.findByTestId("llm-settings-screen");
+    expect(screen.queryByTestId("llm-api-key-input")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("openhands-api-key-help"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("admin-managed-models-help")).toBeInTheDocument();
   });
 
   it("shows the API key input for non-OpenHands providers in SaaS mode", async () => {

@@ -2044,18 +2044,26 @@ class LiveStatusAppConversationService(AppConversationServiceBase):
         if not supports_native_session_resume(provider):
             return None
         assert provider is not None
-        if (
-            existing_info.acp_session_cwd
-            and existing_info.acp_session_cwd != expected_cwd
-        ):
-            _logger.warning(
-                'Mirrored ACP session cwd %r != sandbox working dir %r for %s; '
-                'falling back to bootstrap resume',
-                existing_info.acp_session_cwd,
-                expected_cwd,
+        if existing_info.acp_session_cwd:
+            if existing_info.acp_session_cwd != expected_cwd:
+                _logger.warning(
+                    'Mirrored ACP session cwd %r != sandbox working dir %r for %s; '
+                    'falling back to bootstrap resume',
+                    existing_info.acp_session_cwd,
+                    expected_cwd,
+                    conversation_id,
+                )
+                return None
+        else:
+            # No recorded cwd (e.g. the conversation was mirrored before cwd
+            # capture). We can't verify the match here, so proceed: the snapshot
+            # restore below and the CLI's own session/load are the real gate —
+            # they degrade to bootstrap resume if the session doesn't fit.
+            _logger.debug(
+                'No mirrored ACP session cwd for %s; attempting native resume '
+                'without the cwd guard',
                 conversation_id,
             )
-            return None
         user_id = await self.user_context.get_user_id()
         restored = await self._get_acp_snapshot_service().restore_into_sandbox(
             conversation_id=conversation_id,

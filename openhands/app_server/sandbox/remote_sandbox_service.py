@@ -409,7 +409,7 @@ class RemoteSandboxService(SandboxService):
             )
             return self._to_sandbox_info(stored_sandbox, None)
 
-async def check_concurrency_limit(self) -> None:
+    async def check_concurrency_limit(self) -> None:
         """Check if the user has reached their concurrent sandbox limit.
 
         This check is performed synchronously before creating a task to allow

@@ -1,13 +1,18 @@
-"""Add is_paused column to v1_remote_sandbox table
+"""Add composite index on event_callback for execute_callbacks query
 
 Revision ID: 010
 Revises: 009
-Create Date: 2026-06-02 00:00:00.000000
+Create Date: 2026-06-03
+
+The execute_callbacks query filters on (status, event_kind, conversation_id)
+but none of these columns were indexed, causing full table scans on every
+event dispatch. This index directly covers that query.
+
+CREATE INDEX CONCURRENTLY is used to avoid locking the table during deployment.
 """
 
 from typing import Sequence
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = '010'
@@ -17,27 +22,21 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add is_paused column to v1_remote_sandbox.
-
-    Enables the concurrency-limit check to query the DB directly by
-    (created_by_user_id, is_paused) instead of calling the runtime
-    API's global /list endpoint on every conversation start.
-
-    Existing rows default to False (not paused), which is the safe
-    assumption: rows without an API-confirmed paused state are treated
-    as running, matching the previous behaviour.
-    """
-    with op.batch_alter_table('v1_remote_sandbox') as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                'is_paused',
-                sa.Boolean(),
-                nullable=False,
-                server_default='0',
-            )
+    with op.get_context().autocommit_block():
+        op.create_index(
+            'ix_event_callback_conversation_id_status_event_kind',
+            'event_callback',
+            ['conversation_id', 'status', 'event_kind'],
+            postgresql_concurrently=True,
+            if_not_exists=True,
         )
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('v1_remote_sandbox') as batch_op:
-        batch_op.drop_column('is_paused')
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            'ix_event_callback_conversation_id_status_event_kind',
+            table_name='event_callback',
+            postgresql_concurrently=True,
+            if_exists=True,
+        )

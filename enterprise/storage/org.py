@@ -11,7 +11,7 @@ from server.constants import (
 from sqlalchemy import JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from storage.base import Base
-from storage.encrypt_utils import decrypt_value, encrypt_value
+from storage.encrypt_utils import EncryptedJSON, decrypt_value, encrypt_value
 
 if TYPE_CHECKING:
     from storage.api_key import ApiKey
@@ -69,6 +69,10 @@ class Org(Base):
     sandbox_grouping_strategy: Mapped[str | None] = mapped_column(String, nullable=True)
     max_concurrent_sandboxes: Mapped[int] = mapped_column(
         nullable=False, default=DEFAULT_COMMERCIAL_ORG_CONCURRENT_SANDBOXES
+    )
+    # Encrypted column for LLM profiles (contains API keys)
+    llm_profiles: Mapped[dict[str, Any] | None] = mapped_column(
+        EncryptedJSON, nullable=True
     )
 
     # Relationships

@@ -10,6 +10,7 @@ class SandboxStatus(Enum):
     STARTING = 'STARTING'
     RUNNING = 'RUNNING'
     PAUSED = 'PAUSED'
+    STOPPED = 'STOPPED'
     ERROR = 'ERROR'
     MISSING = 'MISSING'
     """Missing - possibly deleted"""

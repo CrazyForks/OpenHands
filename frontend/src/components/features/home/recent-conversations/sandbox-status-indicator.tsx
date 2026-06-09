@@ -17,6 +17,8 @@ const getSandboxStatusLabel = (status: V1SandboxStatus): string => {
       return "COMMON$STARTING";
     case "PAUSED":
       return "COMMON$PAUSED";
+    case "STOPPED":
+      return "COMMON$STOPPED";
     case "MISSING":
       return "COMMON$ARCHIVED";
     default:
@@ -36,7 +38,8 @@ export function SandboxStatusIndicator({
       case "STARTING":
         return "bg-[#FFD43B]"; // Busy/starting - yellow
       case "PAUSED":
-        return "bg-[#A3A3A3]"; // Paused - grey
+      case "STOPPED":
+        return "bg-[#A3A3A3]"; // Inactive - grey
       case "MISSING":
         return "bg-[#A3A3A3]"; // Missing - grey (archived)
       default:

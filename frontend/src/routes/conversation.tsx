@@ -91,18 +91,20 @@ function AppContent() {
     }
   }, [conversation, isFetched, isAuthed, navigate, t]);
 
-  // Check if this is an archived conversation (sandbox no longer exists)
+  // MISSING means the sandbox no longer exists; STOPPED means the runtime was
+  // intentionally stopped. Both are read-only, but only MISSING is archived.
   const isArchived = conversation?.sandbox_status === "MISSING";
+  const isStopped = conversation?.sandbox_status === "STOPPED";
 
-  // For archived conversations, show a simplified read-only view
-  // similar to the shared conversation view
-  if (isArchived) {
+  if (isArchived || isStopped) {
     return (
       <WebSocketProviderWrapper conversationId={conversationId}>
         <ConversationSubscriptionsProvider>
           <EventHandler>
             <div data-testid="app-route" className="flex flex-col h-full gap-3">
-              <ArchivedConversationView />
+              <ArchivedConversationView
+                reason={isStopped ? "stopped" : "archived"}
+              />
             </div>
           </EventHandler>
         </ConversationSubscriptionsProvider>

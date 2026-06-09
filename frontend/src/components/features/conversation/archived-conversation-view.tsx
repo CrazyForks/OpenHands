@@ -16,7 +16,13 @@ import { ConversationNameWithStatus } from "./conversation-name-with-status";
  * Similar to the shared conversation view, it only shows the conversation
  * events without the VS Code tab, Planner, Terminal, and other interactive elements.
  */
-export function ArchivedConversationView() {
+interface ArchivedConversationViewProps {
+  reason?: "archived" | "stopped";
+}
+
+export function ArchivedConversationView({
+  reason = "archived",
+}: ArchivedConversationViewProps) {
   const { t } = useTranslation();
   const conversationWebSocket = useConversationWebSocket();
   const { v1FullEvents } = useFilteredEvents();
@@ -53,7 +59,13 @@ export function ArchivedConversationView() {
 
       {/* Archived banner */}
       <div className="px-3 md:px-0 py-2">
-        <ArchivedBanner />
+        <ArchivedBanner
+          messageKey={
+            reason === "stopped"
+              ? I18nKey.CHAT_INTERFACE$AGENT_STOPPED_MESSAGE
+              : I18nKey.CONVERSATION$ARCHIVED_READ_ONLY
+          }
+        />
       </div>
 
       {/* Chat panel - read-only */}

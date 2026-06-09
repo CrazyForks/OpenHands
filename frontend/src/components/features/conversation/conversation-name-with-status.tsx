@@ -25,7 +25,9 @@ export function ConversationNameWithStatus() {
 
   const isStartingStatus =
     curAgentState === AgentState.LOADING || curAgentState === AgentState.INIT;
-  const isStopStatus = conversation?.sandbox_status === "MISSING";
+  const isStopStatus =
+    conversation?.sandbox_status === "MISSING" ||
+    conversation?.sandbox_status === "STOPPED";
 
   const statusColor = getStatusColor({
     isPausing: false,
@@ -67,7 +69,7 @@ export function ConversationNameWithStatus() {
               : undefined
           }
           onStartServer={
-            conversation?.sandbox_status === "MISSING"
+            conversation?.sandbox_status === "PAUSED"
               ? handleStartServer
               : undefined
           }

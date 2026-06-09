@@ -1,7 +1,13 @@
 import { useTranslation } from "react-i18next";
 import { I18nKey } from "#/i18n/declaration";
 
-export function ArchivedBanner() {
+interface ArchivedBannerProps {
+  messageKey?: I18nKey;
+}
+
+export function ArchivedBanner({
+  messageKey = I18nKey.CONVERSATION$ARCHIVED_READ_ONLY,
+}: ArchivedBannerProps) {
   const { t } = useTranslation();
 
   return (
@@ -9,9 +15,7 @@ export function ArchivedBanner() {
       data-testid="archived-banner"
       className="flex items-center justify-center px-4 py-3 rounded-lg bg-neutral-700 border border-neutral-600"
     >
-      <span className="text-sm text-neutral-300">
-        {t(I18nKey.CONVERSATION$ARCHIVED_READ_ONLY)}
-      </span>
+      <span className="text-sm text-neutral-300">{t(messageKey)}</span>
     </div>
   );
 }

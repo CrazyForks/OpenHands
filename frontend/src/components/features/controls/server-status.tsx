@@ -25,7 +25,8 @@ export function ServerStatus({
 
   const isStartingStatus =
     curAgentState === AgentState.LOADING || curAgentState === AgentState.INIT;
-  const isStopStatus = sandboxStatus === "MISSING";
+  const isStopStatus =
+    sandboxStatus === "MISSING" || sandboxStatus === "STOPPED";
 
   const statusColor = getStatusColor({
     isPausing,

@@ -12,9 +12,9 @@ function mapV1StatusToV0State(
   status: V1ExecutionStatus | null,
   sandboxStatus: V1SandboxStatus | undefined,
 ): AgentState {
-  // For archived conversations (sandbox MISSING), return STOPPED to avoid loading states
-  // The conversation is read-only and won't resume, so we should not show "starting" indicators
-  if (sandboxStatus === "MISSING") {
+  // For unavailable conversations, return STOPPED to avoid loading states.
+  // STOPPED is not archived; it means the runtime was stopped.
+  if (sandboxStatus === "MISSING" || sandboxStatus === "STOPPED") {
     return AgentState.STOPPED;
   }
 
@@ -52,7 +52,7 @@ export interface UseAgentStateResult {
  * Unified hook that returns the current agent state
  * - For V0 conversations: Returns state from useAgentStore
  * - For V1 conversations: Returns mapped state from useV1ConversationStateStore
- * - For archived conversations (sandbox MISSING): Returns STOPPED state
+ * - For unavailable conversations (sandbox MISSING/STOPPED): Returns STOPPED state
  */
 export function useAgentState(): UseAgentStateResult {
   const liveExecutionStatus = useV1ConversationStateStore(

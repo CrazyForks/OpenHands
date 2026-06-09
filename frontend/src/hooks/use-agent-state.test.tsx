@@ -98,4 +98,18 @@ describe("useAgentState", () => {
     expect(result.current.curAgentState).toBe(AgentState.STOPPED);
     expect(result.current.isArchived).toBe(true);
   });
+
+  it("returns STOPPED state without isArchived for stopped sandboxes", () => {
+    mockUseActiveConversation.mockReturnValue({
+      data: {
+        execution_status: V1ExecutionStatus.FINISHED,
+        sandbox_status: "STOPPED",
+      },
+    } as ReturnType<typeof useActiveConversation>);
+
+    const { result } = renderHook(() => useAgentState());
+
+    expect(result.current.curAgentState).toBe(AgentState.STOPPED);
+    expect(result.current.isArchived).toBe(false);
+  });
 });

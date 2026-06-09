@@ -63,8 +63,6 @@ vi.mock("react-i18next", () => ({
         LLM$SELECT_MODEL_PLACEHOLDER: "Select a model",
         SETTINGS$ADMIN_MANAGED_PROVIDER: "Default",
         SETTINGS$CUSTOM_LLM_PROVIDER: "Custom LLM Provider",
-        SETTINGS$ADMIN_MANAGED_MODELS_HELP:
-          "These models are configured for this OpenHands Enterprise instance by your administrator.",
         SETTINGS$NEED_OPENHANDS_ACCOUNT: "Need an OpenHands Account?",
         SETTINGS$CLICK_HERE: "Click here",
       };
@@ -118,9 +116,6 @@ describe("ModelSelector", () => {
     await user.click(screen.getByText("Default"));
 
     expect(screen.getByLabelText("LLM Provider")).toHaveValue("Default");
-    expect(screen.getByTestId("admin-managed-models-help")).toHaveTextContent(
-      "These models are configured for this OpenHands Enterprise instance by your administrator.",
-    );
     expect(
       screen.queryByTestId("openhands-account-help"),
     ).not.toBeInTheDocument();

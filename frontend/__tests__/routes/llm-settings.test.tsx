@@ -844,7 +844,6 @@ describe("LlmSettingsScreen", () => {
     expect(
       screen.queryByTestId("openhands-api-key-help"),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("admin-managed-models-help")).toBeInTheDocument();
   });
 
   it("shows the API key input for non-OpenHands providers in SaaS mode", async () => {

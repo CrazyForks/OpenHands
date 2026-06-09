@@ -40,6 +40,7 @@ from openhands.app_server.sandbox.sandbox_models import (
     ExposedUrl,
     SandboxInfo,
     SandboxPage,
+    SandboxRecord,
     SandboxStatus,
 )
 from openhands.app_server.sandbox.sandbox_service import (
@@ -408,7 +409,7 @@ class RemoteSandboxService(SandboxService):
             )
             return self._to_sandbox_info(stored_sandbox, None)
 
-    async def check_concurrency_limit(self) -> None:
+async def check_concurrency_limit(self) -> None:
         """Check if the user has reached their concurrent sandbox limit.
 
         This check is performed synchronously before creating a task to allow
@@ -436,6 +437,27 @@ class RemoteSandboxService(SandboxService):
                     'current': current_count,
                 }
             )
+
+    async def get_sandbox_record_by_session_api_key(
+        self, session_api_key: str
+    ) -> SandboxRecord | None:
+        """Get persisted sandbox identity by session API key — DB lookup only, no runtime call."""
+        session_api_key_hash = _hash_session_api_key(session_api_key)
+
+        stmt = await self._secure_select()
+        stmt = stmt.where(
+            StoredRemoteSandbox.session_api_key_hash == session_api_key_hash
+        )
+        result = await self.db_session.execute(stmt)
+        stored_sandbox = result.scalar_one_or_none()
+
+        if stored_sandbox is None:
+            return None
+
+        return SandboxRecord(
+            id=stored_sandbox.id,
+            created_by_user_id=stored_sandbox.created_by_user_id,
+        )
 
     async def start_sandbox(
         self, sandbox_spec_id: str | None = None, sandbox_id: str | None = None

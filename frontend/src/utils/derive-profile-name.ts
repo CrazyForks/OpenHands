@@ -1,8 +1,10 @@
-// Backend-enforced pattern: ^[A-Za-z0-9._-]{1,64}$
+// Backend-enforced pattern: 1-64 chars using letters, digits, spaces, dot,
+// dash, or underscore. Names may not start or end with a space.
 // Matches settings_router.py — keep them in sync.
-const ALLOWED_CHARS = /[^A-Za-z0-9._-]/g;
+const ALLOWED_CHARS = /[^A-Za-z0-9 ._-]/g;
 
-export const PROFILE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+export const PROFILE_NAME_PATTERN =
+  /^(?:[A-Za-z0-9._-]|[A-Za-z0-9._-][A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])$/;
 
 /**
  * Build a profile name from an LLM model string.

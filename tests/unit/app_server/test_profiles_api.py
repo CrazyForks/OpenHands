@@ -610,6 +610,22 @@ async def test_rename_profile_renames_and_preserves_api_key(
 
 
 @pytest.mark.asyncio
+async def test_rename_profile_allows_spaces(test_client, settings_store):
+    settings = _base_settings()
+    settings.llm_profiles.save('old', LLM(model='openai/gpt-4o'))
+    await _seed(settings_store, settings)
+
+    response = test_client.post(
+        '/api/v1/settings/profiles/old/rename',
+        json={'new_name': 'Opus 4.7'},
+    )
+
+    assert response.status_code == 200
+    stored = await settings_store.load()
+    assert stored.llm_profiles.has('Opus 4.7')
+
+
+@pytest.mark.asyncio
 async def test_rename_profile_preserves_active_flag(test_client, settings_store):
     settings = _base_settings()
     settings.llm_profiles.save('p', LLM(model='openai/gpt-4o'))
@@ -686,7 +702,7 @@ async def test_rename_profile_rejects_invalid_new_name(test_client, settings_sto
 
     response = test_client.post(
         '/api/v1/settings/profiles/p/rename',
-        json={'new_name': 'has space'},
+        json={'new_name': 'has/slash'},
     )
 
     assert response.status_code == 422
@@ -699,7 +715,6 @@ async def test_rename_profile_rejects_invalid_new_name(test_client, settings_sto
     'bad_name',
     [
         'a' * 65,  # too long
-        'with space',  # disallowed char
         'with/slash',  # slash splits the path → endpoint not matched
         'weird$chars',  # disallowed char
     ],
@@ -711,6 +726,20 @@ def test_save_profile_rejects_invalid_name(test_client, bad_name):
     )
     # Invalid chars/length → 422 from Path validation; slash → 404/405 routing miss.
     assert response.status_code in (404, 405, 422)
+
+
+@pytest.mark.asyncio
+async def test_save_profile_allows_spaces(test_client, settings_store):
+    await _seed(settings_store, _base_settings())
+
+    response = test_client.post(
+        '/api/v1/settings/profiles/Opus%204.7',
+        json={'llm': {'model': 'anthropic/claude-opus-4-7'}},
+    )
+
+    assert response.status_code == 201
+    stored = await settings_store.load()
+    assert stored.llm_profiles.has('Opus 4.7')
 
 
 # ── Profile count cap ────────────────────────────────────────────

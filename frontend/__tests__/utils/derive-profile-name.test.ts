@@ -10,15 +10,15 @@ describe("deriveProfileNameFromModel", () => {
   });
 
   it("collapses disallowed characters into single underscores", () => {
-    // Colons, spaces, plus signs, etc. are not in [A-Za-z0-9._-].
+    // Colons, plus signs, etc. are not in [A-Za-z0-9 ._-].
     expect(deriveProfileNameFromModel("openai/gpt-4o:custom")).toBe(
       "openai_gpt-4o_custom",
     );
-    expect(deriveProfileNameFromModel("a b c")).toBe("a_b_c");
     expect(deriveProfileNameFromModel("a+++b")).toBe("a_b");
   });
 
-  it("preserves dots, dashes, and underscores as-is", () => {
+  it("preserves spaces, dots, dashes, and underscores as-is", () => {
+    expect(deriveProfileNameFromModel("a b c")).toBe("a b c");
     expect(deriveProfileNameFromModel("foo.bar-baz_qux")).toBe(
       "foo.bar-baz_qux",
     );
@@ -62,7 +62,8 @@ describe("deriveProfileNameFromModel", () => {
   });
 
   it("produces names that satisfy the backend regex", () => {
-    const pattern = /^[A-Za-z0-9._-]{1,64}$/;
+    const pattern =
+      /^(?:[A-Za-z0-9._-]|[A-Za-z0-9._-][A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])$/;
     for (const model of [
       "openai/gpt-4o",
       "anthropic/claude-3-5-sonnet",

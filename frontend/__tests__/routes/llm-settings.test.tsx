@@ -2516,7 +2516,7 @@ describe("LlmSettingsScreen", () => {
         "llm-profile-name-input",
       );
       await userEvent.clear(profileNameInput);
-      await userEvent.type(profileNameInput, "my-custom-name");
+      await userEvent.type(profileNameInput, "Opus 4.7");
       await userEvent.type(
         await screen.findByTestId("llm-api-key-input"),
         "test-api-key",
@@ -2525,19 +2525,19 @@ describe("LlmSettingsScreen", () => {
 
       await waitFor(() => {
         expect(ProfilesService.saveProfile).toHaveBeenCalledWith(
-          "my-custom-name",
+          "Opus 4.7",
           { include_secrets: true },
         );
       });
       await waitFor(() => {
         expect(ProfilesService.activateProfile).toHaveBeenCalledWith(
-          "my-custom-name",
+          "Opus 4.7",
         );
       });
     });
 
     it("falls back to the derived name when the user-typed name fails the regex", async () => {
-      // "has space" is invalid (PROFILE_NAME_PATTERN forbids whitespace).
+      // "has/slash" is invalid (PROFILE_NAME_PATTERN forbids slash).
       // The helper text turns red but save proceeds with the derived name —
       // we don't want a settings save to silently succeed while the profile
       // step blows up server-side with a 422.
@@ -2553,7 +2553,7 @@ describe("LlmSettingsScreen", () => {
 
       await userEvent.type(
         await screen.findByTestId("llm-profile-name-input"),
-        "has space",
+        "has/slash",
       );
       await userEvent.type(
         await screen.findByTestId("llm-api-key-input"),

@@ -76,23 +76,35 @@ export function ModelSelector({
   );
 
   const verifiedProviders = React.useMemo(
-    () =>
-      providers.filter(
+    () => {
+      const visibleProviders = providers.filter(
         (p) => p.verified && (!managedProviderOnly || p.name === "openhands"),
-      ),
-    [managedProviderOnly, providers],
+      );
+
+      if (!allowCustomProvider || managedProviderOnly) {
+        return visibleProviders;
+      }
+
+      const customProvider = { name: CUSTOM_LLM_PROVIDER, verified: true };
+      const openHandsIndex = visibleProviders.findIndex(
+        (provider) => provider.name === "openhands",
+      );
+
+      if (openHandsIndex === -1) {
+        return [customProvider, ...visibleProviders];
+      }
+
+      return [
+        ...visibleProviders.slice(0, openHandsIndex + 1),
+        customProvider,
+        ...visibleProviders.slice(openHandsIndex + 1),
+      ];
+    },
+    [allowCustomProvider, managedProviderOnly, providers],
   );
   const unverifiedProviders = React.useMemo(
-    () =>
-      managedProviderOnly
-        ? []
-        : [
-            ...providers.filter((p) => !p.verified),
-            ...(allowCustomProvider
-              ? [{ name: CUSTOM_LLM_PROVIDER, verified: false }]
-              : []),
-          ],
-    [allowCustomProvider, managedProviderOnly, providers],
+    () => (managedProviderOnly ? [] : providers.filter((p) => !p.verified)),
+    [managedProviderOnly, providers],
   );
 
   const verifiedModels = React.useMemo(

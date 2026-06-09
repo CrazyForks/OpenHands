@@ -11,7 +11,7 @@ Permission model:
 """
 
 import contextlib
-from typing import Any, AsyncIterator
+from typing import Annotated, Any, AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
@@ -41,6 +41,14 @@ from openhands.app_server.utils.logger import openhands_logger as logger
 from ..auth.authorization import Permission, require_permission
 
 router = APIRouter(tags=['Organization Profiles'])
+
+_PROFILE_NAME_PATTERN = (
+    r'^(?:[A-Za-z0-9._-]|[A-Za-z0-9._-][A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])$'
+)
+ProfileName = Annotated[
+    str,
+    Path(min_length=1, max_length=64, pattern=_PROFILE_NAME_PATTERN),
+]
 
 
 # ── Request/Response Models ────────────────────────────────────────────────
@@ -94,7 +102,12 @@ class SaveProfileRequest(BaseModel):
 class RenameProfileRequest(BaseModel):
     """Request body for renaming a profile."""
 
-    new_name: str = Field(..., min_length=1, max_length=100)
+    new_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=_PROFILE_NAME_PATTERN,
+    )
 
 
 # ── Helper Functions ────────────────────────────────────────────────────────
@@ -181,7 +194,7 @@ async def list_profiles(
 @router.get('/{org_id}/profiles/{name}', response_model=ProfileDetailResponse)
 async def get_profile(
     org_id: UUID,
-    name: str = Path(..., min_length=1),
+    name: ProfileName,
     user_id: str = Depends(require_permission(Permission.VIEW_ORG_SETTINGS)),
 ) -> ProfileDetailResponse:
     """Get details of a specific profile."""
@@ -202,7 +215,7 @@ async def get_profile(
 @router.post('/{org_id}/profiles/{name}', response_model=ProfileMutationResponse)
 async def save_profile(
     org_id: UUID,
-    name: str = Path(..., min_length=1, max_length=100),
+    name: ProfileName,
     request: SaveProfileRequest = SaveProfileRequest(),
     user_id: str = Depends(require_permission(Permission.EDIT_ORG_SETTINGS)),
 ) -> ProfileMutationResponse:
@@ -233,7 +246,7 @@ async def save_profile(
 @router.delete('/{org_id}/profiles/{name}', response_model=ProfileMutationResponse)
 async def delete_profile(
     org_id: UUID,
-    name: str = Path(..., min_length=1),
+    name: ProfileName,
     user_id: str = Depends(require_permission(Permission.EDIT_ORG_SETTINGS)),
 ) -> ProfileMutationResponse:
     """Delete an LLM profile."""
@@ -256,7 +269,7 @@ async def delete_profile(
 )
 async def activate_profile(
     org_id: UUID,
-    name: str = Path(..., min_length=1),
+    name: ProfileName,
     user_id: str = Depends(require_permission(Permission.EDIT_ORG_SETTINGS)),
 ) -> ActivateProfileResponse:
     """Activate a profile for the current user.
@@ -344,7 +357,7 @@ async def activate_profile(
 @router.post('/{org_id}/profiles/{name}/rename', response_model=ProfileMutationResponse)
 async def rename_profile(
     org_id: UUID,
-    name: str = Path(..., min_length=1),
+    name: ProfileName,
     request: RenameProfileRequest = Body(...),
     user_id: str = Depends(require_permission(Permission.EDIT_ORG_SETTINGS)),
 ) -> ProfileMutationResponse:

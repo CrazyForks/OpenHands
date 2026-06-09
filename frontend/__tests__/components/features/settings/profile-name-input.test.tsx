@@ -27,7 +27,16 @@ describe("ProfileNameInput", () => {
 
     rerender(
       <ProfileNameInput
-        value="has space"
+        value="Opus 4.7"
+        onChange={vi.fn()}
+        ruleTestId="rule"
+      />,
+    );
+    expect(screen.getByTestId("rule")).toHaveClass("text-gray-400");
+
+    rerender(
+      <ProfileNameInput
+        value="has/slash"
         onChange={vi.fn()}
         ruleTestId="rule"
       />,

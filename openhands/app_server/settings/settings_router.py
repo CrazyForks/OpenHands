@@ -310,11 +310,13 @@ async def invalidate_legacy_secrets_store(
 
 # ── LLM Profile endpoints ─────────────────────────────────────────
 
-# Profile name constraints: alphanumerics + . _ - only, 1-64 chars. This
-# blocks empty names, path-traversal fragments, slash-in-name routing
-# ambiguity, and pathological long inputs. Applied via ``Path`` so FastAPI
-# rejects the request before the handler runs.
-_NAME_PATTERN = r'^[A-Za-z0-9._-]{1,64}$'
+# Profile name constraints: letters, digits, spaces, dot, dash, or underscore,
+# 1-64 chars. This blocks empty names, path-traversal fragments,
+# slash-in-name routing ambiguity, and pathological long inputs. Applied via
+# ``Path`` so FastAPI rejects the request before the handler runs.
+_NAME_PATTERN = (
+    r'^(?:[A-Za-z0-9._-]|[A-Za-z0-9._-][A-Za-z0-9 ._-]{0,62}[A-Za-z0-9._-])$'
+)
 ProfileName = Annotated[
     str,
     Path(min_length=1, max_length=64, pattern=_NAME_PATTERN),

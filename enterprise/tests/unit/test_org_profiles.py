@@ -152,19 +152,26 @@ class TestRenameProfileRequest:
         request = RenameProfileRequest(new_name='new-name')
         assert request.new_name == 'new-name'
 
+        request = RenameProfileRequest(new_name='Opus 4.7')
+        assert request.new_name == 'Opus 4.7'
+
     def test_name_validation(self):
         """Test name length validation."""
         # Should accept reasonable names
-        request = RenameProfileRequest(new_name='a' * 100)
-        assert len(request.new_name) == 100
+        request = RenameProfileRequest(new_name='a' * 64)
+        assert len(request.new_name) == 64
 
         # Should reject empty names (min_length=1)
         with pytest.raises(ValueError):
             RenameProfileRequest(new_name='')
 
-        # Should reject too-long names (max_length=100)
+        # Should reject too-long names (max_length=64)
         with pytest.raises(ValueError):
-            RenameProfileRequest(new_name='a' * 101)
+            RenameProfileRequest(new_name='a' * 65)
+
+        # Should reject path separators.
+        with pytest.raises(ValueError):
+            RenameProfileRequest(new_name='has/slash')
 
 
 # ── Integration tests ──────────────────────────────────────────────────────

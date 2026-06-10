@@ -40,7 +40,7 @@ export function ConversationLimitModal({
             type="button"
             variant="primary"
             onClick={onClose}
-            className="flex-1"
+            className="flex-1 bg-white text-black hover:bg-gray-100"
             testId="conversation-limit-close-button"
           >
             {t(I18nKey.BUTTON$CLOSE)}

@@ -45,6 +45,8 @@ import { OrgLlmProfilesManager } from "#/components/features/settings/org-llm-pr
 import { ProfileNameInput } from "#/components/features/settings/profile-name-input";
 import { Typography } from "#/ui/typography";
 import { useOrgTypeAndAccess } from "#/hooks/use-org-type-and-access";
+import { useMe } from "#/hooks/query/use-me";
+import { usePermission } from "#/hooks/organizations/use-permissions";
 
 const LLM_EXCLUDED_KEYS = new Set(["llm.model", "llm.api_key", "llm.base_url"]);
 
@@ -63,14 +65,6 @@ const getSchemaFieldDefaultValue = (
 
 const KNOWN_PROVIDER_DEFAULT_BASE_URLS: Partial<Record<string, Set<string>>> = {
   openai: new Set(["https://api.openai.com", "https://api.openai.com/v1"]),
-  openhands: new Set([
-    "https://llm-proxy.app.all-hands.dev",
-    "https://llm-proxy.app.all-hands.dev/v1",
-  ]),
-  litellm_proxy: new Set([
-    "https://llm-proxy.app.all-hands.dev",
-    "https://llm-proxy.app.all-hands.dev/v1",
-  ]),
 };
 
 const normalizeBaseUrl = (baseUrl: string) => {
@@ -112,7 +106,9 @@ export function LlmSettingsScreen({
     settings?.agent_settings_schema,
   );
   const { data: config } = useConfig();
-  const { isPersonalOrg, organizationId } = useOrgTypeAndAccess();
+  const { organizationId } = useOrgTypeAndAccess();
+  const { data: me } = useMe();
+  const { hasPermission } = usePermission(me?.role ?? "member");
 
   const [selectedProvider, setSelectedProvider] = React.useState<string | null>(
     null,
@@ -127,7 +123,7 @@ export function LlmSettingsScreen({
   const activateProfile = useActivateLlmProfile();
   const renameProfile = useRenameLlmProfile();
 
-  // Org profile hooks (for SaaS mode with personal orgs)
+  // Org profile hooks (for org defaults)
   const saveOrgProfile = useSaveOrgLlmProfile(organizationId);
   const activateOrgProfile = useActivateOrgLlmProfile(organizationId);
   const renameOrgProfile = useRenameOrgLlmProfile(organizationId);
@@ -135,11 +131,11 @@ export function LlmSettingsScreen({
   // Controls whether the LLM form or the Profiles list is shown. Flipping
   // this unmounts the inactive branch, so the SdkSectionPage re-hydrates
   // its view from ``initialViewHint`` when coming back from profiles.
-  // Enable profiles for:
-  // - Personal scope (OSS mode)
-  // - Org scope with personal org (SaaS mode)
-  const shouldShowProfilesForScope =
-    scope === "personal" || (scope === "org" && isPersonalOrg);
+  // Enable profiles for personal settings and org defaults. Org members can
+  // view org profiles, but only admins/owners can create or manage them.
+  const shouldShowProfilesForScope = scope === "personal" || scope === "org";
+  const canManageProfilesForScope =
+    scope === "personal" || hasPermission("edit_llm_settings");
   const [showProfiles, setShowProfiles] = React.useState(
     shouldShowProfilesForScope,
   );
@@ -158,10 +154,8 @@ export function LlmSettingsScreen({
   const [initialViewHint, setInitialViewHint] =
     React.useState<SettingsView | null>(null);
 
-  // Show profiles view for personal scope OR org scope with personal org
   const isProfilesView = shouldShowProfilesForScope && showProfiles;
-  // Use org-scoped profile operations when in org scope
-  const isOrgProfileMode = scope === "org" && isPersonalOrg;
+  const isOrgProfileMode = scope === "org";
 
   const defaultModel = String(
     (DEFAULT_SETTINGS.agent_settings?.llm as Record<string, unknown>)?.model ??
@@ -306,7 +300,7 @@ export function LlmSettingsScreen({
             </Typography.Paragraph>
           ) : null}
 
-          {shouldShowProfilesForScope ? (
+          {canManageProfilesForScope ? (
             <ProfileNameInput
               testId="llm-profile-name-input"
               ruleTestId="llm-profile-name-rule"
@@ -393,7 +387,7 @@ export function LlmSettingsScreen({
       scope,
       selectedProvider,
       settings?.llm_api_key_set,
-      shouldShowProfilesForScope,
+      canManageProfilesForScope,
       t,
     ],
   );
@@ -465,16 +459,14 @@ export function LlmSettingsScreen({
       : null;
     const name = userName ?? derivedName;
 
-    // Auto-saved profiles for:
-    // - Personal scope (OSS mode)
-    // - Org scope with personal org (SaaS mode)
     const shouldSaveProfile =
-      (scope === "personal" || (scope === "org" && isPersonalOrg)) && name;
+      canManageProfilesForScope &&
+      (scope === "personal" || (scope === "org" && organizationId)) &&
+      name;
 
     if (shouldSaveProfile) {
       try {
-        // Use org profile hooks for org scope, personal hooks for personal scope
-        const useOrgHooks = scope === "org" && isPersonalOrg;
+        const useOrgHooks = scope === "org";
 
         // Editing an existing profile and renaming it via the form should
         // rename the record in place rather than spawning a new one and
@@ -521,8 +513,9 @@ export function LlmSettingsScreen({
   }, [
     activateProfile,
     activateOrgProfile,
+    canManageProfilesForScope,
     initialProfileName,
-    isPersonalOrg,
+    organizationId,
     profileName,
     renameProfile,
     renameOrgProfile,
@@ -539,13 +532,22 @@ export function LlmSettingsScreen({
   };
 
   if (isProfilesView) {
-    // Use org profiles manager for personal orgs in SaaS mode
-    if (isOrgProfileMode && organizationId) {
+    if (isOrgProfileMode) {
+      if (!organizationId) {
+        return null;
+      }
       return (
         <OrgLlmProfilesManager
           orgId={organizationId}
-          onAddProfile={() => openForm(null)}
-          onEditProfile={(profile) => openForm(null, profile.name)}
+          canManage={canManageProfilesForScope}
+          onAddProfile={
+            canManageProfilesForScope ? () => openForm(null) : undefined
+          }
+          onEditProfile={
+            canManageProfilesForScope
+              ? (profile) => openForm(null, profile.name)
+              : undefined
+          }
         />
       );
     }
@@ -558,9 +560,9 @@ export function LlmSettingsScreen({
     );
   }
 
-  // Sub-page back affordance when profiles are enabled (personal scope or
-  // personal org). Replaces the previous "Profiles" trailing action so the
-  // form view follows the second-level settings pattern.
+  // Sub-page back affordance when profiles are enabled. Replaces the previous
+  // "Profiles" trailing action so the form view follows the second-level
+  // settings pattern.
   const backToProfiles = shouldShowProfilesForScope ? (
     <button
       data-testid="llm-back-to-profiles"
@@ -596,7 +598,7 @@ export function LlmSettingsScreen({
         // settings fields being dirty. This matters in SaaS managed mode, where
         // the model is fixed and there's no editable API key, leaving the form
         // pristine and Save stuck disabled.
-        extraDirty={shouldShowProfilesForScope}
+        extraDirty={canManageProfilesForScope}
         onSaveSuccess={handleSaveSuccess}
         getInitialView={getInitialView}
         forceShowAdvancedView

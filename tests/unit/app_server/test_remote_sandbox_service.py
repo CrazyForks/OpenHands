@@ -232,7 +232,7 @@ class TestStatusMapping:
         test_cases = [
             ('running', SandboxStatus.RUNNING),
             ('paused', SandboxStatus.PAUSED),
-            ('stopped', SandboxStatus.MISSING),
+            ('stopped', SandboxStatus.STOPPED),
             ('starting', SandboxStatus.STARTING),
             ('error', SandboxStatus.ERROR),
         ]

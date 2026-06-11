@@ -175,7 +175,7 @@ def _get_feature_flags() -> WebClientFeatureFlags:
         hide_integrations_page=os.getenv('HIDE_INTEGRATIONS_PAGE', 'false') == 'true',
         hide_personal_workspaces=os.getenv('HIDE_PERSONAL_WORKSPACES', 'false')
         == 'true',
-        enable_acp=os.getenv('ENABLE_ACP', 'false') == 'true',
+        enable_acp=os.getenv('ENABLE_ACP', 'true') != 'false',
         enable_onboarding=os.getenv('OH_ENABLE_ONBOARDING', 'false') == 'true',
     )
 

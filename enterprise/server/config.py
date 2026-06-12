@@ -74,7 +74,7 @@ class SaaSServerConfig(ServerConfig):
     enable_jira_dc = ENABLE_JIRA_DC
     enable_linear = ENABLE_LINEAR
     enable_onboarding = os.environ.get('OH_ENABLE_ONBOARDING', 'false') == 'true'
-    enable_acp = os.environ.get('ENABLE_ACP', 'true') != 'false'
+    enable_acp = True
 
     app_slug: None | str = None
 

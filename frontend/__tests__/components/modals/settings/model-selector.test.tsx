@@ -25,6 +25,10 @@ const mockModelsByProvider: Record<string, LLMModel[]> = {
   azure: [
     { provider: "azure", name: "ada", verified: false },
     { provider: "azure", name: "gpt-35-turbo", verified: false },
+    // Served-but-not-promoted alias route (e.g. a legacy name a managed
+    // proxy keeps serving after a rename): never a dropdown option, but a
+    // saved setting referencing it still counts as available.
+    { provider: "azure", name: "legacy-alias", verified: false, hidden: true },
   ],
   vertex_ai: [
     { provider: "vertex_ai", name: "chat-bison", verified: false },
@@ -111,6 +115,8 @@ describe("ModelSelector", () => {
 
     expect(screen.getByText("ada")).toBeInTheDocument();
     expect(screen.getByText("gpt-35-turbo")).toBeInTheDocument();
+    // Hidden alias routes are served by the backend but never promoted.
+    expect(screen.queryByText("legacy-alias")).not.toBeInTheDocument();
   });
 
   it("should call onChange when the provider and model change", async () => {
@@ -155,6 +161,19 @@ describe("ModelSelector", () => {
           screen.getByTestId("model-unavailable-warning"),
         ).toBeInTheDocument();
       });
+    });
+
+    it("does not show a warning when the saved model matches a hidden alias", async () => {
+      // "legacy-alias" is served by the backend (hidden=true) but is not a
+      // dropdown option — the saved setting still routes, so no warning.
+      renderWithQuery(<ModelSelector currentModel="azure/legacy-alias" />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("LLM Provider")).toHaveValue("Azure");
+      });
+      expect(
+        screen.queryByTestId("model-unavailable-warning"),
+      ).not.toBeInTheDocument();
     });
 
     it("does not show a warning when the saved model is in the model list", async () => {

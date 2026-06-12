@@ -17,6 +17,11 @@ export interface ModelsResponse {
   verified_providers: string[];
   /** Recommended default model id (e.g. ``openhands/claude-opus-4-5-20251101``). */
   default_model: string;
+  /** ``provider/model`` strings the backend serves but does not promote
+   *  (e.g. legacy alias routes on a managed LiteLLM proxy): not dropdown
+   *  options, but saved settings referencing them still count as available.
+   *  Optional so older backends (no field) behave as before. */
+  hidden_models?: string[];
 }
 
 export interface WebClientFeatureFlags {

@@ -59,19 +59,27 @@ export function ModelSelector({
     [providers],
   );
 
-  const verifiedModels = React.useMemo(
-    () => providerModels.filter((m) => m.verified),
+  // Hidden models (e.g. legacy alias routes a managed proxy still serves
+  // after a rename) are never offered as dropdown options, but they do
+  // count as available for the saved-model check below.
+  const dropdownModels = React.useMemo(
+    () => providerModels.filter((m) => !m.hidden),
     [providerModels],
   );
+  const verifiedModels = React.useMemo(
+    () => dropdownModels.filter((m) => m.verified),
+    [dropdownModels],
+  );
   const unverifiedModels = React.useMemo(
-    () => providerModels.filter((m) => !m.verified),
-    [providerModels],
+    () => dropdownModels.filter((m) => !m.verified),
+    [dropdownModels],
   );
 
   // Truthful-but-gentle signal that the displayed model no longer exists in
   // the provider's model list (e.g. an admin removed it from a managed
   // proxy). Only shown when the list actually loaded non-empty — a fetch
   // error or an unknown provider must not cast doubt on a working config.
+  // Hidden models count as available: the proxy still serves them.
   const isSelectedModelUnavailable = React.useMemo(
     () =>
       !!selectedModel &&

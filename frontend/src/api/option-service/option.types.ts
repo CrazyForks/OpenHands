@@ -31,6 +31,11 @@ export interface WebClientFeatureFlags {
   /** Hide personal workspaces from the org list/selector for users who
    *  belong to at least one team org (OHE "org-only" installs). */
   hide_personal_workspaces?: boolean;
+  /** When false, hide the BYOK editing UI (custom model, base URL, API key)
+   *  in LLM settings — users only pick from the managed model dropdown.
+   *  Defaults to true (absent ⇒ allowed) so SaaS/existing installs are
+   *  unaffected. Saved BYOK settings keep working at runtime either way. */
+  allow_user_llm_configuration?: boolean;
   enable_acp?: boolean;
   deployment_mode?: DeploymentMode;
   enable_onboarding: boolean;

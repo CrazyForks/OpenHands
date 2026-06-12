@@ -186,6 +186,13 @@ export function LlmSettingsScreen({
 
   const isSaasMode = config?.app_mode === "saas";
 
+  // OHE installs can disable BYOK via OH_ALLOW_USER_LLM_CONFIGURATION; absent
+  // (SaaS / existing installs) means allowed. This hides the *editing* UI for
+  // custom model / base URL / API key only — saved BYOK settings keep working
+  // at runtime, and the managed model dropdown stays fully functional.
+  const allowUserLlmConfiguration =
+    config?.feature_flags?.allow_user_llm_configuration !== false;
+
   React.useEffect(() => {
     // An open profile form owns the provider selection (blank for create,
     // profile-derived for edit) — don't let the active settings override it.
@@ -222,6 +229,12 @@ export function LlmSettingsScreen({
       currentSettings: Settings,
       filteredSchema: SettingsSchema,
     ): SettingsView => {
+      // Without BYOK there is nothing for the advanced/all tiers to reveal in
+      // the custom header, so always land on the managed model dropdown.
+      if (!allowUserLlmConfiguration) {
+        return "basic";
+      }
+
       // A hint set by the Profiles mirror-strip beats every other rule —
       // the user explicitly asked for this tier when leaving profiles.
       if (initialViewHint) {
@@ -272,7 +285,14 @@ export function LlmSettingsScreen({
 
       return hasCustomBaseUrl ? "all" : "basic";
     },
-    [editingProfile, initialViewHint, isSaasMode, profileFormMode, scope],
+    [
+      allowUserLlmConfiguration,
+      editingProfile,
+      initialViewHint,
+      isSaasMode,
+      profileFormMode,
+      scope,
+    ],
   );
 
   const buildHeader = React.useCallback(
@@ -292,7 +312,10 @@ export function LlmSettingsScreen({
           : derivedProvider;
       const shouldUseOpenHandsKey =
         isSaasMode && activeProvider === "openhands";
-      const showOpenHandsApiKeyHelp = modelValue.startsWith("openhands/");
+      // The OpenHands key help links to SaaS API keys/pricing — misleading on
+      // a managed install where admins own the keys.
+      const showOpenHandsApiKeyHelp =
+        modelValue.startsWith("openhands/") && allowUserLlmConfiguration;
       // While editing, the set-but-unfetchable key indicator must reflect
       // the clicked profile, not whichever profile is currently active.
       const apiKeySet =
@@ -301,6 +324,12 @@ export function LlmSettingsScreen({
           : settings?.llm_api_key_set;
 
       const renderApiKeyInput = (testId: string, helpTestId: string) => {
+        // Managed installs: the admin owns provider keys on the bundled
+        // proxy; users never enter one.
+        if (!allowUserLlmConfiguration) {
+          return null;
+        }
+
         if (shouldUseOpenHandsKey) {
           return null;
         }
@@ -361,7 +390,7 @@ export function LlmSettingsScreen({
             />
           ) : null}
 
-          {view === "basic" ? (
+          {view === "basic" || !allowUserLlmConfiguration ? (
             <div
               className="flex flex-col gap-6"
               data-testid="llm-settings-form-basic"
@@ -434,6 +463,7 @@ export function LlmSettingsScreen({
       );
     },
     [
+      allowUserLlmConfiguration,
       editingProfile,
       infoMessageKey,
       isSaasMode,
@@ -741,7 +771,10 @@ export function LlmSettingsScreen({
             values["llm.model"].trim().length > 0
           )
         }
-        forceShowAdvancedView
+        // Without BYOK the advanced header has nothing extra to show, so only
+        // force the Advanced toggle when user LLM configuration is allowed.
+        // (Schema-driven advanced fields can still surface the toggle.)
+        forceShowAdvancedView={allowUserLlmConfiguration}
         allowAllView={!isSaasMode}
         testId="llm-settings-screen"
       />

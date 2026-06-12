@@ -68,6 +68,20 @@ export function ModelSelector({
     [providerModels],
   );
 
+  // Truthful-but-gentle signal that the displayed model no longer exists in
+  // the provider's model list (e.g. an admin removed it from a managed
+  // proxy). Only shown when the list actually loaded non-empty — a fetch
+  // error or an unknown provider must not cast doubt on a working config.
+  const isSelectedModelUnavailable = React.useMemo(
+    () =>
+      !!selectedModel &&
+      !isLoadingModels &&
+      !modelsError &&
+      providerModels.length > 0 &&
+      !providerModels.some((m) => m.name === selectedModel),
+    [selectedModel, isLoadingModels, modelsError, providerModels],
+  );
+
   React.useEffect(() => {
     if (currentModel) {
       const { provider, model } = extractModelAndProvider(currentModel);
@@ -223,6 +237,14 @@ export function ModelSelector({
         {modelsError && (
           <p data-testid="models-error" className="text-danger text-xs">
             {t(I18nKey.CONFIGURATION$ERROR_FETCH_MODELS)}
+          </p>
+        )}
+        {isSelectedModelUnavailable && (
+          <p
+            data-testid="model-unavailable-warning"
+            className="text-yellow-400 text-xs"
+          >
+            {t(I18nKey.SETTINGS$MODEL_NO_LONGER_AVAILABLE)}
           </p>
         )}
       </fieldset>

@@ -6527,6 +6527,23 @@
     "uk": "Отримайте свій ключ API від Tavily",
     "ca": "Obteniu la vostra clau d'API a Tavily"
   },
+  "SETTINGS$MODEL_NO_LONGER_AVAILABLE": {
+    "en": "No longer available",
+    "ja": "現在は利用できません",
+    "zh-CN": "已不再可用",
+    "zh-TW": "已不再可用",
+    "ko-KR": "더 이상 사용할 수 없음",
+    "de": "Nicht mehr verfügbar",
+    "no": "Ikke lenger tilgjengelig",
+    "it": "Non più disponibile",
+    "pt": "Não está mais disponível",
+    "es": "Ya no está disponible",
+    "ar": "لم يعد متاحًا",
+    "fr": "N'est plus disponible",
+    "tr": "Artık mevcut değil",
+    "uk": "Більше недоступна",
+    "ca": "Ja no està disponible"
+  },
   "SETTINGS$CUSTOM_MODEL": {
     "en": "Custom Model",
     "ja": "カスタムモデル",

@@ -12,6 +12,9 @@ const mockProviders: LLMProvider[] = [
   { name: "openai", verified: true },
   { name: "azure", verified: false },
   { name: "vertex_ai", verified: false },
+  // Provider whose model list comes back empty (no entry in
+  // mockModelsByProvider) — used by the unavailable-model warning tests.
+  { name: "groq", verified: false },
 ];
 
 const mockModelsByProvider: Record<string, LLMModel[]> = {
@@ -141,5 +144,62 @@ describe("ModelSelector", () => {
     const { container } = renderWithQuery(<ModelSelector />);
 
     expect(container.firstChild).toHaveClass("w-full");
+  });
+
+  describe("unavailable model warning", () => {
+    it("shows a warning when the saved model is missing from a non-empty model list", async () => {
+      renderWithQuery(<ModelSelector currentModel="azure/removed-model" />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("model-unavailable-warning"),
+        ).toBeInTheDocument();
+      });
+    });
+
+    it("does not show a warning when the saved model is in the model list", async () => {
+      renderWithQuery(<ModelSelector currentModel="azure/ada" />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("LLM Model")).toHaveValue("ada");
+      });
+      expect(
+        screen.queryByTestId("model-unavailable-warning"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not show a warning when the provider's model list is empty", async () => {
+      // "groq" has no entry in mockModelsByProvider, so the hook returns []
+      // — an empty list must not cast doubt on the saved model.
+      renderWithQuery(<ModelSelector currentModel="groq/llama3-70b" />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("LLM Provider")).toHaveValue("Groq");
+      });
+      expect(
+        screen.queryByTestId("model-unavailable-warning"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("clears the warning when the user picks an available model", async () => {
+      const user = userEvent.setup();
+      renderWithQuery(<ModelSelector currentModel="azure/removed-model" />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("model-unavailable-warning"),
+        ).toBeInTheDocument();
+      });
+
+      const modelSelector = screen.getByLabelText("LLM Model");
+      await user.click(modelSelector);
+      await user.click(screen.getByText("ada"));
+
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("model-unavailable-warning"),
+        ).not.toBeInTheDocument();
+      });
+    });
   });
 });

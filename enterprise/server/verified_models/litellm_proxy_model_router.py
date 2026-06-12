@@ -1,0 +1,200 @@
+"""LiteLLM-proxy-backed LLM model discovery for self-hosted enterprise (OHE).
+
+Self-hosted enterprise installs bundle a LiteLLM proxy, and the set of models
+that actually works for a customer is exactly the set configured on that
+proxy. This service discovers models from the proxy's ``GET /model/info``
+endpoint instead of unioning the static litellm catalogue and the SaaS
+``verified_models`` database table, so the model dropdown only shows models
+that genuinely exist on the customer's proxy.
+
+Activate via the environment variable::
+
+    OH_LLM_MODEL_KIND=server.verified_models.litellm_proxy_model_router.LiteLLMProxyModelServiceInjector
+"""
+
+import asyncio
+import logging
+import time
+from typing import Any, AsyncGenerator, ClassVar
+
+import httpx
+from fastapi import Request
+from server.constants import (
+    LITE_LLM_API_KEY,
+    LITE_LLM_API_URL,
+    get_default_litellm_model,
+)
+
+from openhands.app_server.config_api.default_llm_model_service import (
+    DefaultLLMModelService,
+)
+from openhands.app_server.config_api.llm_model_service import (
+    LLMModelService,
+    LLMModelServiceInjector,
+)
+from openhands.app_server.services.injector import InjectorState
+from openhands.app_server.utils.http_session import httpx_verify_option
+from openhands.app_server.utils.llm import ModelsResponse
+
+_logger = logging.getLogger(__name__)
+
+# Timeout (seconds) for the proxy /model/info request.
+MODEL_INFO_TIMEOUT = 5.0
+# How long (seconds) a successful discovery result is reused before refetching.
+CACHE_TTL_SECONDS = 60.0
+
+# The proxy-transport prefix used by LITELLM_DEFAULT_MODEL.
+_LITELLM_PROXY_PREFIX = 'litellm_proxy/'
+# The public/stored prefix used by the app. The SDK translates
+# ``openhands/`` -> ``litellm_proxy/`` at the transport boundary.
+_OPENHANDS_PREFIX = 'openhands/'
+
+
+def _derive_default_model() -> str:
+    """Translate the env-derived default model to the public prefix.
+
+    ``LITELLM_DEFAULT_MODEL`` holds the default as ``litellm_proxy/<name>``;
+    the app stores and displays models as ``openhands/<name>``.
+    """
+    default = get_default_litellm_model()
+    if default.startswith(_LITELLM_PROXY_PREFIX):
+        return _OPENHANDS_PREFIX + default[len(_LITELLM_PROXY_PREFIX) :]
+    if default.startswith(_OPENHANDS_PREFIX):
+        return default
+    return _OPENHANDS_PREFIX + default
+
+
+class LiteLLMProxyModelService(DefaultLLMModelService):
+    """Model discovery backed by the bundled LiteLLM proxy.
+
+    Inherits filtering, pagination, and provider logic from
+    ``DefaultLLMModelService`` — only the model list source is different.
+
+    Results are cached at class level (the injector creates a new service per
+    request) with a short TTL. On fetch failure the last-good result is
+    served regardless of age; if there has never been a successful fetch an
+    empty model list is returned. Discovery never raises out of the request
+    path just because the proxy is briefly unreachable.
+    """
+
+    # Shared across instances; one service instance is created per request.
+    _shared_response: ClassVar[ModelsResponse | None] = None
+    _shared_fetched_at: ClassVar[float] = 0.0
+    _fetch_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+
+    @classmethod
+    def _reset_cache(cls) -> None:
+        """Clear the shared cache (intended for tests)."""
+        cls._shared_response = None
+        cls._shared_fetched_at = 0.0
+
+    @staticmethod
+    def _now() -> float:
+        """Monotonic clock; isolated for tests."""
+        return time.monotonic()
+
+    async def _fetch_proxy_model_names(self) -> list[str]:
+        """Fetch visible, deduplicated model names from the proxy.
+
+        Entries flagged ``model_info.openhands_hidden`` are skipped.
+        Duplicate ``model_name`` entries are intentional load-balanced
+        deployments — only the first occurrence is kept. Proxy order is
+        preserved. ``litellm_params`` are never propagated.
+        """
+        url = LITE_LLM_API_URL.rstrip('/') + '/model/info'
+        headers: dict[str, str] = {}
+        if LITE_LLM_API_KEY:
+            headers['Authorization'] = f'Bearer {LITE_LLM_API_KEY}'
+        async with httpx.AsyncClient(
+            verify=httpx_verify_option(), timeout=MODEL_INFO_TIMEOUT
+        ) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+
+        names: list[str] = []
+        seen: set[str] = set()
+        for entry in payload.get('data') or []:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get('model_name')
+            if not name or not isinstance(name, str):
+                continue
+            model_info: Any = entry.get('model_info') or {}
+            if isinstance(model_info, dict) and model_info.get('openhands_hidden'):
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return names
+
+    @staticmethod
+    def _build_response(model_names: list[str]) -> ModelsResponse:
+        return ModelsResponse(
+            models=[_OPENHANDS_PREFIX + name for name in model_names],
+            verified_models=list(model_names),
+            verified_providers=['openhands'],
+            default_model=_derive_default_model(),
+        )
+
+    async def _get_models_response(
+        self,
+        verified_models: list[str] | None = None,
+    ) -> ModelsResponse:
+        cls = LiteLLMProxyModelService
+        response = cls._shared_response
+        if (
+            response is not None
+            and self._now() - cls._shared_fetched_at < CACHE_TTL_SECONDS
+        ):
+            return response
+
+        async with cls._fetch_lock:
+            # Re-check after acquiring the lock — a concurrent request may
+            # have refreshed the cache while this one was waiting.
+            response = cls._shared_response
+            if (
+                response is not None
+                and self._now() - cls._shared_fetched_at < CACHE_TTL_SECONDS
+            ):
+                return response
+
+            try:
+                model_names = await self._fetch_proxy_model_names()
+            except Exception:
+                if response is not None:
+                    # Serve the last-good result regardless of age. The next
+                    # request retries because the timestamp is not refreshed.
+                    _logger.warning(
+                        'Failed to fetch models from the LiteLLM proxy; '
+                        'serving the last successful result',
+                        exc_info=True,
+                    )
+                    return response
+                _logger.error(
+                    'Failed to fetch models from the LiteLLM proxy and no '
+                    'previous result is cached; returning an empty model list',
+                    exc_info=True,
+                )
+                # Not cached, so the next request retries immediately.
+                return self._build_response([])
+
+            response = self._build_response(model_names)
+            cls._shared_response = response
+            cls._shared_fetched_at = self._now()
+            return response
+
+
+class LiteLLMProxyModelServiceInjector(LLMModelServiceInjector):
+    """Injector that provides the LiteLLM-proxy-backed model service.
+
+    Activate via the environment variable::
+
+        OH_LLM_MODEL_KIND=server.verified_models.litellm_proxy_model_router.LiteLLMProxyModelServiceInjector
+    """
+
+    async def inject(
+        self, state: InjectorState, request: Request | None = None
+    ) -> AsyncGenerator[LLMModelService, None]:
+        yield LiteLLMProxyModelService()

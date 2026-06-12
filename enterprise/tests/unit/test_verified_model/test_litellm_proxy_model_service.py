@@ -23,7 +23,10 @@ HAPPY_PAYLOAD = {
         {
             'model_name': 'hidden-model',
             'litellm_params': {'model': 'openai/gpt-5'},
-            'model_info': {'openhands_hidden': True},
+            'model_info': {
+                'openhands_hidden': True,
+                'openhands_canonical': 'claude-sonnet-4-5',
+            },
         },
         {
             # Duplicate of the first entry — a load-balanced deployment.
@@ -136,6 +139,10 @@ class TestHappyPath:
         # Hidden alias routes are still reported so saved settings that
         # reference them count as available.
         assert response.hidden_models == ['openhands/hidden-model']
+        # The alias carries its canonical mapping (canonical is visible).
+        assert response.hidden_model_canonicals == {
+            'openhands/hidden-model': 'openhands/claude-sonnet-4-5'
+        }
         # litellm_proxy/ prefix translated to openhands/.
         assert response.default_model == 'openhands/claude-sonnet-4-5'
 
@@ -149,14 +156,15 @@ class TestHappyPath:
 
         page = await service.search_llm_models()
 
-        names = [(m.provider, m.name, m.hidden) for m in page.items]
+        names = [(m.provider, m.name, m.hidden, m.canonical) for m in page.items]
         assert names == [
-            ('openhands', 'claude-sonnet-4-5', False),
-            ('openhands', 'gpt-5', False),
+            ('openhands', 'claude-sonnet-4-5', False, None),
+            ('openhands', 'gpt-5', False, None),
             # Hidden alias routes ride along flagged hidden=True so the
             # frontend can exclude them from dropdown options while still
-            # treating saved settings that reference them as available.
-            ('openhands', 'hidden-model', True),
+            # treating saved settings that reference them as available;
+            # canonical names the visible model the alias routes to.
+            ('openhands', 'hidden-model', True, 'claude-sonnet-4-5'),
         ]
 
     async def test_hidden_only_when_all_duplicate_entries_hidden(self, monkeypatch):
@@ -187,6 +195,77 @@ class TestHappyPath:
 
         assert response.models == ['openhands/mixed-model']
         assert response.hidden_models == ['openhands/legacy-alias']
+        # No openhands_canonical tags anywhere -> no mappings.
+        assert response.hidden_model_canonicals == {}
+
+    async def test_canonical_skipped_when_not_visible(self, monkeypatch):
+        # A canonical tag pointing at a name the proxy does not serve
+        # visibly is dropped; a tag on a visible entry is ignored.
+        payload = {
+            'data': [
+                {'model_name': 'real-model', 'model_info': {}},
+                {
+                    'model_name': 'alias-to-missing',
+                    'model_info': {
+                        'openhands_hidden': True,
+                        'openhands_canonical': 'removed-model',
+                    },
+                },
+                {
+                    'model_name': 'alias-to-hidden',
+                    'model_info': {
+                        'openhands_hidden': True,
+                        'openhands_canonical': 'other-alias',
+                    },
+                },
+                {
+                    'model_name': 'other-alias',
+                    'model_info': {'openhands_hidden': True},
+                },
+            ]
+        }
+        install_client(monkeypatch, response=FakeResponse(payload))
+        service = LiteLLMProxyModelService()
+
+        response = await service._get_models_response()
+
+        assert response.models == ['openhands/real-model']
+        assert response.hidden_models == [
+            'openhands/alias-to-missing',
+            'openhands/alias-to-hidden',
+            'openhands/other-alias',
+        ]
+        assert response.hidden_model_canonicals == {}
+
+        page = await service.search_llm_models()
+        assert all(m.canonical is None for m in page.items)
+
+    async def test_canonical_mapped_for_visible_target(self, monkeypatch):
+        payload = {
+            'data': [
+                {'model_name': 'real-model', 'model_info': {}},
+                {
+                    'model_name': 'legacy-alias',
+                    'model_info': {
+                        'openhands_hidden': True,
+                        'openhands_canonical': 'real-model',
+                    },
+                },
+                {
+                    # Hidden alias without a canonical tag -> no mapping.
+                    'model_name': 'untagged-alias',
+                    'model_info': {'openhands_hidden': True},
+                },
+            ]
+        }
+        install_client(monkeypatch, response=FakeResponse(payload))
+        service = LiteLLMProxyModelService()
+
+        response = await service._get_models_response()
+
+        assert response.hidden_model_canonicals == {
+            'openhands/legacy-alias': 'openhands/real-model'
+        }
 
     async def test_search_providers_only_openhands(self, monkeypatch):
         install_client(monkeypatch, response=FakeResponse(HAPPY_PAYLOAD))
@@ -237,6 +316,7 @@ class TestFailurePaths:
         assert response.models == []
         assert response.verified_models == []
         assert response.hidden_models == []
+        assert response.hidden_model_canonicals == {}
         # The env-derived default is still communicated.
         assert response.default_model == 'openhands/claude-sonnet-4-5'
         assert any(

@@ -29,6 +29,14 @@ class LLMModel(BaseModel):
             'managed LiteLLM proxy)'
         ),
     )
+    canonical: str | None = Field(
+        default=None,
+        description=(
+            'For a hidden model only: the name of the visible model (same '
+            'provider) this one aliases, so clients can display a saved '
+            'hidden model under its canonical name'
+        ),
+    )
 
 
 class LLMModelPage(BaseModel):

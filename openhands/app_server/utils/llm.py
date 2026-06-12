@@ -86,6 +86,11 @@ class ModelsResponse(BaseModel):
       options, yet an already-saved setting referencing one is still valid
       (e.g. legacy alias routes on a managed LiteLLM proxy). Default empty,
       so SaaS / default discovery behavior is unchanged.
+    * ``hidden_model_canonicals`` — maps a hidden ``provider/model`` string
+      to the visible ``provider/model`` it aliases, so clients can display a
+      saved hidden model under its canonical name. Only mappings whose
+      target is in ``models`` are included. Default empty, so SaaS / default
+      discovery behavior is unchanged.
     """
 
     models: list[str]
@@ -93,6 +98,7 @@ class ModelsResponse(BaseModel):
     verified_providers: list[str]
     default_model: str
     hidden_models: list[str] = []
+    hidden_model_canonicals: dict[str, str] = {}
 
 
 def is_openhands_model(model: str | None) -> bool:

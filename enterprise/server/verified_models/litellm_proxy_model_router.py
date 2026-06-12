@@ -93,16 +93,22 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
         """Monotonic clock; isolated for tests."""
         return time.monotonic()
 
-    async def _fetch_proxy_model_names(self) -> tuple[list[str], list[str]]:
-        """Fetch deduplicated ``(visible, hidden)`` model names from the proxy.
+    async def _fetch_proxy_model_names(
+        self,
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        """Fetch ``(visible, hidden, canonicals)`` model names from the proxy.
 
         Entries flagged ``model_info.openhands_hidden`` (legacy alias routes
         the proxy still serves after a rename) are collected separately: they
         must not be offered as dropdown options, but a saved setting that
-        references one is still valid. A duplicated ``model_name`` is an
-        intentional load-balanced deployment — it is reported once, and is
-        hidden only when *every* entry carrying that name is hidden. Proxy
-        order is preserved. ``litellm_params`` are never propagated.
+        references one is still valid. A hidden entry may carry
+        ``model_info.openhands_canonical`` naming the visible route it
+        aliases; ``canonicals`` maps hidden name -> canonical name, dropping
+        mappings whose target is not among the visible names. A duplicated
+        ``model_name`` is an intentional load-balanced deployment — it is
+        reported once, and is hidden only when *every* entry carrying that
+        name is hidden. Proxy order is preserved. ``litellm_params`` are
+        never propagated.
         """
         url = LITE_LLM_API_URL.rstrip('/') + '/model/info'
         headers: dict[str, str] = {}
@@ -117,6 +123,7 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
 
         order: list[str] = []
         hidden_by_name: dict[str, bool] = {}
+        canonical_by_name: dict[str, str] = {}
         for entry in payload.get('data') or []:
             if not isinstance(entry, dict):
                 continue
@@ -127,6 +134,10 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
             hidden = isinstance(model_info, dict) and bool(
                 model_info.get('openhands_hidden')
             )
+            if hidden and name not in canonical_by_name:
+                canonical = model_info.get('openhands_canonical')
+                if canonical and isinstance(canonical, str):
+                    canonical_by_name[name] = canonical
             if name not in hidden_by_name:
                 order.append(name)
                 hidden_by_name[name] = hidden
@@ -135,12 +146,19 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
                 hidden_by_name[name] = False
         visible = [name for name in order if not hidden_by_name[name]]
         hidden_names = [name for name in order if hidden_by_name[name]]
-        return visible, hidden_names
+        visible_set = set(visible)
+        canonicals = {
+            name: canonical_by_name[name]
+            for name in hidden_names
+            if canonical_by_name.get(name) in visible_set
+        }
+        return visible, hidden_names, canonicals
 
     @staticmethod
     def _build_response(
         model_names: list[str],
         hidden_model_names: list[str] | None = None,
+        hidden_model_canonicals: dict[str, str] | None = None,
     ) -> ModelsResponse:
         return ModelsResponse(
             models=[_OPENHANDS_PREFIX + name for name in model_names],
@@ -150,6 +168,10 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
             hidden_models=[
                 _OPENHANDS_PREFIX + name for name in hidden_model_names or []
             ],
+            hidden_model_canonicals={
+                _OPENHANDS_PREFIX + alias: _OPENHANDS_PREFIX + canonical
+                for alias, canonical in (hidden_model_canonicals or {}).items()
+            },
         )
 
     async def _get_models_response(
@@ -175,7 +197,11 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
                 return response
 
             try:
-                model_names, hidden_model_names = await self._fetch_proxy_model_names()
+                (
+                    model_names,
+                    hidden_model_names,
+                    hidden_model_canonicals,
+                ) = await self._fetch_proxy_model_names()
             except Exception:
                 if response is not None:
                     # Serve the last-good result regardless of age. The next
@@ -194,7 +220,9 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
                 # Not cached, so the next request retries immediately.
                 return self._build_response([])
 
-            response = self._build_response(model_names, hidden_model_names)
+            response = self._build_response(
+                model_names, hidden_model_names, hidden_model_canonicals
+            )
             cls._shared_response = response
             cls._shared_fetched_at = self._now()
             return response

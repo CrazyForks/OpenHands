@@ -47,6 +47,8 @@ def _to_llm_models(models_response: ModelsResponse) -> list[LLMModel]:
     routes on a managed LiteLLM proxy) are appended after the visible ones
     with ``hidden=True`` so clients can keep them out of dropdown options
     while still treating saved settings that reference them as available.
+    A hidden model with a known canonical mapping carries the visible model
+    name it aliases in ``canonical``.
     """
     results: list[LLMModel] = []
     flagged_models = [(m, False) for m in models_response.models] + [
@@ -59,12 +61,20 @@ def _to_llm_models(models_response: ModelsResponse) -> list[LLMModel]:
         else:
             provider = None
             name = parts[0]
+        canonical = None
+        if hidden:
+            canonical_full = models_response.hidden_model_canonicals.get(model_name)
+            if canonical_full:
+                # Same bare-name convention as ``name`` — the alias and its
+                # canonical model always share the provider.
+                canonical = canonical_full.split('/', 1)[-1]
         results.append(
             LLMModel(
                 provider=provider,
                 name=name,
                 verified=model_name in _VERIFIED_MODEL_SET,
                 hidden=hidden,
+                canonical=canonical,
             )
         )
     return results

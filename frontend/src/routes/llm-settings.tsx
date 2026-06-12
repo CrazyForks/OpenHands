@@ -1,4 +1,5 @@
 import React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { FaChevronLeft } from "react-icons/fa6";
@@ -45,6 +46,7 @@ import { LlmProfilesManager } from "#/components/features/settings/llm-profiles-
 import { OrgLlmProfilesManager } from "#/components/features/settings/org-llm-profiles-manager";
 import { ProfileNameInput } from "#/components/features/settings/profile-name-input";
 import { Typography } from "#/ui/typography";
+import { providerModelsQueryOptions } from "#/hooks/query/use-provider-models";
 import { useOrgTypeAndAccess } from "#/hooks/use-org-type-and-access";
 import { useMe } from "#/hooks/query/use-me";
 import { usePermission } from "#/hooks/organizations/use-permissions";
@@ -111,6 +113,7 @@ export function LlmSettingsScreen({
 }) {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
 
   const { data: settings } = useSettings(scope);
   const { data: schema } = useAgentSettingsSchema(
@@ -638,22 +641,52 @@ export function LlmSettingsScreen({
     scope,
   ]);
 
-  const openForm = (
+  // Legacy profiles can store a hidden catalog alias (e.g. a pre-rename
+  // proxy route). When the alias maps to a visible model, hydrate the edit
+  // form with that canonical id so the dropdown shows a real selection.
+  const resolveCanonicalModel = async (model: string): Promise<string> => {
+    const { provider, model: modelName } = extractModelAndProvider(model);
+    if (!provider) return model;
+    try {
+      const models = await queryClient.fetchQuery(
+        providerModelsQueryOptions(provider),
+      );
+      const match = models.find((m) => m.name === modelName);
+      if (match?.hidden && match.canonical) {
+        return `${provider}/${match.canonical}`;
+      }
+    } catch {
+      // Catalog unavailable — open with the stored model, exactly as today.
+    }
+    return model;
+  };
+
+  const openForm = async (
     view: SettingsView | null,
     profile: LlmProfileSummary | null = null,
   ) => {
     // The profiles list passes the profile only when editing; Add Profile
     // opens a blank create form.
-    const isEdit = profile !== null;
+    let editProfile = profile;
+    if (editProfile?.model) {
+      // Resolved *before* the form opens: SdkSectionPage re-hydrates (and
+      // resets dirty state) whenever the initial-value overrides change, so
+      // a post-mount translation could clobber in-progress user edits.
+      const canonicalModel = await resolveCanonicalModel(editProfile.model);
+      if (canonicalModel !== editProfile.model) {
+        editProfile = { ...editProfile, model: canonicalModel };
+      }
+    }
+    const isEdit = editProfile !== null;
     setProfileFormMode(isEdit ? "edit" : "create");
-    setEditingProfile(profile);
-    setProfileName(profile?.name ?? "");
-    setInitialProfileName(profile?.name ?? "");
+    setEditingProfile(editProfile);
+    setProfileName(editProfile?.name ?? "");
+    setInitialProfileName(editProfile?.name ?? "");
     setInitialViewHint(view);
     // Blank for create; the edited profile's provider for edit.
     setSelectedProvider(
-      profile?.model
-        ? extractModelAndProvider(profile.model).provider || null
+      editProfile?.model
+        ? extractModelAndProvider(editProfile.model).provider || null
         : null,
     );
     setShowProfiles(false);

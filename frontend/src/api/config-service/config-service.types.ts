@@ -9,6 +9,9 @@ export interface LLMModel {
    *  setting that references it still counts as available. Optional so
    *  older backends (no field) behave as before. */
   hidden?: boolean;
+  /** Bare name of the visible model a hidden alias routes to (same
+   *  provider); mirrors the backend LLMModelInfo.canonical contract. */
+  canonical?: string;
 }
 
 export interface LLMModelPage {

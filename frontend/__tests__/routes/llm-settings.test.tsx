@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
+import { http, HttpResponse } from "msw";
 
 import OrgProfilesService from "#/api/organization-service/org-profiles-service.api";
 import { organizationService } from "#/api/organization-service/organization-service.api";
@@ -14,6 +15,7 @@ import {
   MOCK_DEFAULT_USER_SETTINGS,
   resetTestHandlersMockSettings,
 } from "#/mocks/handlers";
+import { server } from "#/mocks/node";
 import LlmSettingsScreen, { clientLoader } from "#/routes/llm-settings";
 import { useSelectedOrganizationStore } from "#/stores/selected-organization-store";
 import { Organization, OrganizationMember } from "#/types/org";
@@ -2968,6 +2970,119 @@ describe("LlmSettingsScreen", () => {
           { include_secrets: true, preserve_existing_api_key: true },
         );
       });
+    });
+
+    it("hydrates the edit form with the canonical model when the profile stores a hidden alias", async () => {
+      // Legacy profile model "openhands/custom-llm" is a hidden alias that
+      // the catalog maps to the visible claude-sonnet model.
+      server.use(
+        http.get("/api/v1/config/models/search", () =>
+          HttpResponse.json({
+            items: [
+              {
+                provider: "openhands",
+                name: "claude-sonnet-4-5-20250929",
+                verified: true,
+              },
+              {
+                provider: "openhands",
+                name: "custom-llm",
+                verified: false,
+                hidden: true,
+                canonical: "claude-sonnet-4-5-20250929",
+              },
+            ],
+            next_page_id: null,
+          }),
+        ),
+      );
+      const saveSettingsSpy = vi
+        .spyOn(SettingsService, "saveSettings")
+        .mockResolvedValue(true);
+
+      await renderLlmSettingsScreen({
+        appMode: "oss",
+        profile: {
+          name: "legacy-profile",
+          model: "openhands/custom-llm",
+          base_url: null,
+        },
+      });
+
+      await screen.findByTestId("llm-settings-form-basic");
+      await waitFor(() => {
+        expect(screen.getByTestId("llm-provider-input")).toHaveValue(
+          "OpenHands",
+        );
+        expect(screen.getByTestId("llm-model-input")).toHaveValue(
+          "claude-sonnet-4-5-20250929",
+        );
+      });
+      expect(
+        screen.queryByTestId("model-unavailable-warning"),
+      ).not.toBeInTheDocument();
+
+      // A pristine save persists the canonical id — deliberately migrating
+      // the profile off the legacy alias (both names route on the proxy).
+      await userEvent.click(screen.getByTestId("save-button"));
+      await waitFor(() => {
+        expect(saveSettingsSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            agent_settings_diff: expect.objectContaining({
+              llm: expect.objectContaining({
+                model: "openhands/claude-sonnet-4-5-20250929",
+              }),
+            }),
+          }),
+        );
+      });
+    });
+
+    it("keeps the stored alias when a hidden model has no canonical mapping", async () => {
+      server.use(
+        http.get("/api/v1/config/models/search", () =>
+          HttpResponse.json({
+            items: [
+              {
+                provider: "openhands",
+                name: "claude-sonnet-4-5-20250929",
+                verified: true,
+              },
+              // Hidden but with no canonical mapping — nothing to translate.
+              {
+                provider: "openhands",
+                name: "orphan-alias",
+                verified: false,
+                hidden: true,
+              },
+            ],
+            next_page_id: null,
+          }),
+        ),
+      );
+
+      await renderLlmSettingsScreen({
+        appMode: "oss",
+        profile: {
+          name: "orphan-profile",
+          model: "openhands/orphan-alias",
+          base_url: null,
+        },
+      });
+
+      await screen.findByTestId("llm-settings-form-basic");
+      await waitFor(() => {
+        expect(screen.getByTestId("llm-provider-input")).toHaveValue(
+          "OpenHands",
+        );
+      });
+      // Unchanged today-behavior: hidden aliases are never dropdown options,
+      // so the selection renders empty — and no unavailable badge, since the
+      // proxy still serves the alias.
+      expect(screen.getByTestId("llm-model-input")).toHaveValue("");
+      expect(
+        screen.queryByTestId("model-unavailable-warning"),
+      ).not.toBeInTheDocument();
     });
 
     it("opens edit on advanced with the profile's custom base URL while the active settings are plain", async () => {

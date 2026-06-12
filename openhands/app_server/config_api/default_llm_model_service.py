@@ -41,9 +41,18 @@ _VERIFIED_MODEL_SET: set[str] = {
 
 
 def _to_llm_models(models_response: ModelsResponse) -> list[LLMModel]:
-    """Convert raw model strings into ``LLMModel`` objects with verified flags."""
+    """Convert raw model strings into ``LLMModel`` objects with verified flags.
+
+    Hidden models (served by the backend but not promoted, e.g. legacy alias
+    routes on a managed LiteLLM proxy) are appended after the visible ones
+    with ``hidden=True`` so clients can keep them out of dropdown options
+    while still treating saved settings that reference them as available.
+    """
     results: list[LLMModel] = []
-    for model_name in models_response.models:
+    flagged_models = [(m, False) for m in models_response.models] + [
+        (m, True) for m in models_response.hidden_models
+    ]
+    for model_name, hidden in flagged_models:
         parts = model_name.split('/', 1)
         if len(parts) == 2:
             provider, name = parts
@@ -55,6 +64,7 @@ def _to_llm_models(models_response: ModelsResponse) -> list[LLMModel]:
                 provider=provider,
                 name=name,
                 verified=model_name in _VERIFIED_MODEL_SET,
+                hidden=hidden,
             )
         )
     return results

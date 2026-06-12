@@ -93,13 +93,16 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
         """Monotonic clock; isolated for tests."""
         return time.monotonic()
 
-    async def _fetch_proxy_model_names(self) -> list[str]:
-        """Fetch visible, deduplicated model names from the proxy.
+    async def _fetch_proxy_model_names(self) -> tuple[list[str], list[str]]:
+        """Fetch deduplicated ``(visible, hidden)`` model names from the proxy.
 
-        Entries flagged ``model_info.openhands_hidden`` are skipped.
-        Duplicate ``model_name`` entries are intentional load-balanced
-        deployments — only the first occurrence is kept. Proxy order is
-        preserved. ``litellm_params`` are never propagated.
+        Entries flagged ``model_info.openhands_hidden`` (legacy alias routes
+        the proxy still serves after a rename) are collected separately: they
+        must not be offered as dropdown options, but a saved setting that
+        references one is still valid. A duplicated ``model_name`` is an
+        intentional load-balanced deployment — it is reported once, and is
+        hidden only when *every* entry carrying that name is hidden. Proxy
+        order is preserved. ``litellm_params`` are never propagated.
         """
         url = LITE_LLM_API_URL.rstrip('/') + '/model/info'
         headers: dict[str, str] = {}
@@ -112,8 +115,8 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
             response.raise_for_status()
             payload = response.json()
 
-        names: list[str] = []
-        seen: set[str] = set()
+        order: list[str] = []
+        hidden_by_name: dict[str, bool] = {}
         for entry in payload.get('data') or []:
             if not isinstance(entry, dict):
                 continue
@@ -121,21 +124,32 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
             if not name or not isinstance(name, str):
                 continue
             model_info: Any = entry.get('model_info') or {}
-            if isinstance(model_info, dict) and model_info.get('openhands_hidden'):
-                continue
-            if name in seen:
-                continue
-            seen.add(name)
-            names.append(name)
-        return names
+            hidden = isinstance(model_info, dict) and bool(
+                model_info.get('openhands_hidden')
+            )
+            if name not in hidden_by_name:
+                order.append(name)
+                hidden_by_name[name] = hidden
+            elif not hidden:
+                # Any visible deployment makes the name visible.
+                hidden_by_name[name] = False
+        visible = [name for name in order if not hidden_by_name[name]]
+        hidden_names = [name for name in order if hidden_by_name[name]]
+        return visible, hidden_names
 
     @staticmethod
-    def _build_response(model_names: list[str]) -> ModelsResponse:
+    def _build_response(
+        model_names: list[str],
+        hidden_model_names: list[str] | None = None,
+    ) -> ModelsResponse:
         return ModelsResponse(
             models=[_OPENHANDS_PREFIX + name for name in model_names],
             verified_models=list(model_names),
             verified_providers=['openhands'],
             default_model=_derive_default_model(),
+            hidden_models=[
+                _OPENHANDS_PREFIX + name for name in hidden_model_names or []
+            ],
         )
 
     async def _get_models_response(
@@ -161,7 +175,7 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
                 return response
 
             try:
-                model_names = await self._fetch_proxy_model_names()
+                model_names, hidden_model_names = await self._fetch_proxy_model_names()
             except Exception:
                 if response is not None:
                     # Serve the last-good result regardless of age. The next
@@ -180,7 +194,7 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
                 # Not cached, so the next request retries immediately.
                 return self._build_response([])
 
-            response = self._build_response(model_names)
+            response = self._build_response(model_names, hidden_model_names)
             cls._shared_response = response
             cls._shared_fetched_at = self._now()
             return response

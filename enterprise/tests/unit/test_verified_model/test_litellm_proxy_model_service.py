@@ -127,11 +127,15 @@ class TestHappyPath:
 
         response = await service._get_models_response()
 
-        # Hidden models filtered, duplicates removed, proxy order preserved,
-        # every model exposed under the public openhands/ prefix.
+        # Hidden models kept out of the visible list, duplicates removed,
+        # proxy order preserved, every model exposed under the public
+        # openhands/ prefix.
         assert response.models == ['openhands/claude-sonnet-4-5', 'openhands/gpt-5']
         assert response.verified_models == ['claude-sonnet-4-5', 'gpt-5']
         assert response.verified_providers == ['openhands']
+        # Hidden alias routes are still reported so saved settings that
+        # reference them count as available.
+        assert response.hidden_models == ['openhands/hidden-model']
         # litellm_proxy/ prefix translated to openhands/.
         assert response.default_model == 'openhands/claude-sonnet-4-5'
 
@@ -145,11 +149,44 @@ class TestHappyPath:
 
         page = await service.search_llm_models()
 
-        names = [(m.provider, m.name) for m in page.items]
+        names = [(m.provider, m.name, m.hidden) for m in page.items]
         assert names == [
-            ('openhands', 'claude-sonnet-4-5'),
-            ('openhands', 'gpt-5'),
+            ('openhands', 'claude-sonnet-4-5', False),
+            ('openhands', 'gpt-5', False),
+            # Hidden alias routes ride along flagged hidden=True so the
+            # frontend can exclude them from dropdown options while still
+            # treating saved settings that reference them as available.
+            ('openhands', 'hidden-model', True),
         ]
+
+    async def test_hidden_only_when_all_duplicate_entries_hidden(self, monkeypatch):
+        # A load-balanced group is hidden only when every deployment that
+        # carries the name is hidden; one visible entry wins.
+        payload = {
+            'data': [
+                {
+                    'model_name': 'mixed-model',
+                    'model_info': {'openhands_hidden': True},
+                },
+                {'model_name': 'mixed-model', 'model_info': {}},
+                {
+                    'model_name': 'legacy-alias',
+                    'model_info': {'openhands_hidden': True},
+                },
+                {
+                    # Duplicate hidden entry — reported once.
+                    'model_name': 'legacy-alias',
+                    'model_info': {'openhands_hidden': True},
+                },
+            ]
+        }
+        install_client(monkeypatch, response=FakeResponse(payload))
+        service = LiteLLMProxyModelService()
+
+        response = await service._get_models_response()
+
+        assert response.models == ['openhands/mixed-model']
+        assert response.hidden_models == ['openhands/legacy-alias']
 
     async def test_search_providers_only_openhands(self, monkeypatch):
         install_client(monkeypatch, response=FakeResponse(HAPPY_PAYLOAD))
@@ -199,6 +236,7 @@ class TestFailurePaths:
 
         assert response.models == []
         assert response.verified_models == []
+        assert response.hidden_models == []
         # The env-derived default is still communicated.
         assert response.default_model == 'openhands/claude-sonnet-4-5'
         assert any(

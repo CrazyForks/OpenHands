@@ -20,6 +20,15 @@ class LLMModel(BaseModel):
     verified: bool = Field(
         default=False, description='Whether the model is verified by OpenHands'
     )
+    hidden: bool = Field(
+        default=False,
+        description=(
+            'Whether the model is served but not promoted: it must not be '
+            'offered as a dropdown option, yet an already-saved setting '
+            'referencing it is still valid (e.g. a legacy alias route on a '
+            'managed LiteLLM proxy)'
+        ),
+    )
 
 
 class LLMModelPage(BaseModel):

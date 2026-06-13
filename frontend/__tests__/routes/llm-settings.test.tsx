@@ -835,14 +835,31 @@ describe("LlmSettingsScreen", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides the API key input for OpenHands provider in SaaS mode", async () => {
+  it("hides the API key input for OpenHands provider on enterprise cloud", async () => {
     vi.spyOn(SettingsService, "getSettings").mockResolvedValue(buildSettings());
 
-    await renderLlmSettingsScreen({ appMode: "saas" });
+    await renderLlmSettingsScreen({
+      appMode: "saas",
+      featureFlags: { deployment_mode: "cloud" },
+    });
 
     await screen.findByTestId("llm-settings-screen");
     expect(screen.queryByTestId("llm-api-key-input")).not.toBeInTheDocument();
     expect(screen.getByTestId("openhands-api-key-help")).toBeInTheDocument();
+  });
+
+  it("hides the OpenHands API key help on self-hosted OHE", async () => {
+    vi.spyOn(SettingsService, "getSettings").mockResolvedValue(buildSettings());
+
+    await renderLlmSettingsScreen({
+      appMode: "saas",
+      featureFlags: { deployment_mode: "self_hosted" },
+    });
+
+    await screen.findByTestId("llm-settings-screen");
+    expect(
+      screen.queryByTestId("openhands-api-key-help"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the API key input for non-OpenHands providers in SaaS mode", async () => {

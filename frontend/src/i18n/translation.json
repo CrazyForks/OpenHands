@@ -4947,7 +4947,7 @@
     "ca": "Aquesta configuració està gestionada per l'administrador de la teva organització"
   },
   "SETTINGS$ORG_DEFAULTS_INFO": {
-    "en": "These organization defaults are applied first. Members can still add their own credentials or personal overrides where allowed.",
+    "en": "These organization defaults are applied first. Members can apply personal overrides where allowed.",
     "ja": "これらの組織のデフォルト設定が最初に適用されます。メンバーは許可されている範囲で、自分の認証情報や個人設定を追加できます。",
     "zh-CN": "这些组织默认设置会首先应用。成员仍然可以在允许的范围内添加自己的凭据或个人覆盖设置。",
     "zh-TW": "這些組織預設設定會首先套用。成員仍然可以在允許的範圍內新增自己的憑證或個人覆蓋設定。",

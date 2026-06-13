@@ -48,6 +48,7 @@ import { ProfileNameInput } from "#/components/features/settings/profile-name-in
 import { Typography } from "#/ui/typography";
 import { providerModelsQueryOptions } from "#/hooks/query/use-provider-models";
 import { useOrgTypeAndAccess } from "#/hooks/use-org-type-and-access";
+import { useAppMode } from "#/hooks/use-app-mode";
 import { useMe } from "#/hooks/query/use-me";
 import { usePermission } from "#/hooks/organizations/use-permissions";
 
@@ -188,6 +189,7 @@ export function LlmSettingsScreen({
   );
 
   const isSaasMode = config?.app_mode === "saas";
+  const { isEnterpriseCloud } = useAppMode();
 
   // OHE installs can disable BYOK via OH_ALLOW_USER_LLM_CONFIGURATION; absent
   // (SaaS / existing installs) means allowed. This hides the *editing* UI for
@@ -315,10 +317,12 @@ export function LlmSettingsScreen({
           : derivedProvider;
       const shouldUseOpenHandsKey =
         isSaasMode && activeProvider === "openhands";
-      // The OpenHands key help links to SaaS API keys/pricing — misleading on
-      // a managed install where admins own the keys.
+      // The OpenHands key help links to OpenHands Cloud keys/pricing — only
+      // meaningful on enterprise cloud, not self-hosted managed installs.
       const showOpenHandsApiKeyHelp =
-        modelValue.startsWith("openhands/") && allowUserLlmConfiguration;
+        isEnterpriseCloud &&
+        modelValue.startsWith("openhands/") &&
+        allowUserLlmConfiguration;
       // While editing, the set-but-unfetchable key indicator must reflect
       // the clicked profile, not whichever profile is currently active.
       const apiKeySet =

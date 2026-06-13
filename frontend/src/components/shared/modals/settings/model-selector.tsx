@@ -162,7 +162,13 @@ export function ModelSelector({
             },
           }}
         >
-          <AutocompleteSection title={t(I18nKey.MODEL_SELECTOR$VERIFIED)}>
+          <AutocompleteSection
+            title={
+              unverifiedProviders.length > 0
+                ? t(I18nKey.MODEL_SELECTOR$VERIFIED)
+                : undefined
+            }
+          >
             {verifiedProviders.map((provider) => (
               <AutocompleteItem
                 data-testid={`provider-item-${provider.name}`}
@@ -173,7 +179,13 @@ export function ModelSelector({
             ))}
           </AutocompleteSection>
           {unverifiedProviders.length > 0 ? (
-            <AutocompleteSection title={t(I18nKey.MODEL_SELECTOR$OTHERS)}>
+            <AutocompleteSection
+              title={
+                verifiedProviders.length > 0
+                  ? t(I18nKey.MODEL_SELECTOR$OTHERS)
+                  : undefined
+              }
+            >
               {unverifiedProviders.map((provider) => (
                 <AutocompleteItem key={provider.name}>
                   {mapProvider(provider.name)}
@@ -224,13 +236,25 @@ export function ModelSelector({
             },
           }}
         >
-          <AutocompleteSection title={t(I18nKey.MODEL_SELECTOR$VERIFIED)}>
+          <AutocompleteSection
+            title={
+              unverifiedModels.length > 0
+                ? t(I18nKey.MODEL_SELECTOR$VERIFIED)
+                : undefined
+            }
+          >
             {verifiedModels.map((model) => (
               <AutocompleteItem key={model.name}>{model.name}</AutocompleteItem>
             ))}
           </AutocompleteSection>
           {unverifiedModels.length > 0 ? (
-            <AutocompleteSection title={t(I18nKey.MODEL_SELECTOR$OTHERS)}>
+            <AutocompleteSection
+              title={
+                verifiedModels.length > 0
+                  ? t(I18nKey.MODEL_SELECTOR$OTHERS)
+                  : undefined
+              }
+            >
               {unverifiedModels.map((model) => (
                 <AutocompleteItem
                   data-testid={`model-item-${model.name}`}

@@ -6,7 +6,7 @@ in-memory so that the router stays thin.
 """
 
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable
 
 import httpx
 from fastapi import Request
@@ -40,7 +40,10 @@ _VERIFIED_MODEL_SET: set[str] = {
 }
 
 
-def _to_llm_models(models_response: ModelsResponse) -> list[LLMModel]:
+def _to_llm_models(
+    models_response: ModelsResponse,
+    is_verified: Callable[[str, str, ModelsResponse], bool] | None = None,
+) -> list[LLMModel]:
     """Convert raw model strings into ``LLMModel`` objects with verified flags.
 
     Hidden models (served by the backend but not promoted, e.g. legacy alias
@@ -72,7 +75,11 @@ def _to_llm_models(models_response: ModelsResponse) -> list[LLMModel]:
             LLMModel(
                 provider=provider,
                 name=name,
-                verified=model_name in _VERIFIED_MODEL_SET,
+                verified=(
+                    is_verified(model_name, name, models_response)
+                    if is_verified is not None
+                    else model_name in _VERIFIED_MODEL_SET
+                ),
                 hidden=hidden,
                 canonical=canonical,
             )
@@ -173,6 +180,13 @@ class DefaultLLMModelService(LLMModelService):
         )
         return self._cached_response
 
+    def _is_model_verified(
+        self, model_name: str, name: str, models_response: ModelsResponse
+    ) -> bool:
+        """Whether a model is shown as "verified". Default is the static SDK
+        catalogue; subclasses (e.g. the managed proxy) override this."""
+        return model_name in _VERIFIED_MODEL_SET
+
     # ------------------------------------------------------------------
     # LLMModelService interface
     # ------------------------------------------------------------------
@@ -187,7 +201,7 @@ class DefaultLLMModelService(LLMModelService):
         limit: int = 50,
     ) -> LLMModelPage:
         raw = await self._get_models_response()
-        models = _to_llm_models(raw)
+        models = _to_llm_models(raw, self._is_model_verified)
 
         if query is not None:
             query_lower = query.lower()

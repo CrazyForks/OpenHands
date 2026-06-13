@@ -174,6 +174,14 @@ class LiteLLMProxyModelService(DefaultLLMModelService):
             },
         )
 
+    def _is_model_verified(
+        self, model_name: str, name: str, models_response: ModelsResponse
+    ) -> bool:
+        # Every model the admin curated on the proxy is verified — they are
+        # all listed in verified_models — so the dropdown shows one flat
+        # group instead of an SDK-static verified/other split.
+        return name in set(models_response.verified_models)
+
     async def _get_models_response(
         self,
         verified_models: list[str] | None = None,
